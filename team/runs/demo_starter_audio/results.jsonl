@@ -1,0 +1,3 @@
+{"case_id": "DEMO2", "session_id": "DEMO2-8ed60c09", "first_sound": -1.025831200000539, "spoke_before_end": true, "turn_end": -1.0177648999961093, "agent_text": "주문 관련 문의라면 주문번호를 말씀해 주시겠어요?", "tool_calls": []}
+{"case_id": "DEMO1", "session_id": "DEMO1-45f8eff7", "first_sound": 6.896282499998051, "spoke_before_end": false, "turn_end": 6.90420649999578, "agent_text": "주문 관련 문의라면 주문번호를 말씀해 주시겠어요?", "tool_calls": []}
+{"case_id": "DEMO3", "session_id": "DEMO3-e8649d53", "first_sound": 7.469439600004989, "spoke_before_end": false, "turn_end": 7.478705200002878, "agent_text": "주문 관련 문의라면 주문번호를 말씀해 주시겠어요?", "tool_calls": []}

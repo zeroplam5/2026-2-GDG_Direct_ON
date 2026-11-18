@@ -1,0 +1,3 @@
+{"case_id": "DEMO2", "session_id": "DEMO2-f6b92285", "first_sound": -1.4213770999995177, "spoke_before_end": true, "turn_end": -1.4213726999951177, "agent_text": "(신호음)", "tool_calls": []}
+{"case_id": "DEMO1", "session_id": "DEMO1-aa276231", "first_sound": 5.797400400006154, "spoke_before_end": false, "turn_end": 5.797404600001755, "agent_text": "(신호음)", "tool_calls": []}
+{"case_id": "DEMO3", "session_id": "DEMO3-226ad070", "first_sound": 7.080467500003579, "spoke_before_end": false, "turn_end": 7.0804849000051036, "agent_text": "(신호음)", "tool_calls": []}

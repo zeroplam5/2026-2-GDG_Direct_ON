@@ -1,0 +1,32 @@
+[
+  {
+    "name": "get_order_info",
+    "description": "[DEMO ONLY] Get order status by ID",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "order_id"
+      ],
+      "properties": {
+        "order_id": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "request_callback",
+    "description": "[DEMO ONLY] Create callback request",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "phone_number"
+      ],
+      "properties": {
+        "phone_number": {
+          "type": "string"
+        }
+      }
+    }
+  }
+]

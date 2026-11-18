@@ -1,0 +1,8 @@
+{"case_id": "K04", "session_id": "K04-c4a78bf1", "first_sound": -4.700729500000307, "spoke_before_end": true, "turn_end": -4.700709199998528, "agent_text": "(신호음)", "tool_calls": []}
+{"case_id": "K02", "session_id": "K02-b8779ab2", "first_sound": 0.7722618999978295, "spoke_before_end": false, "turn_end": 0.772265999999945, "agent_text": "(신호음)", "tool_calls": []}
+{"case_id": "K06", "session_id": "K06-63ea600a", "first_sound": -2.142636999997194, "spoke_before_end": true, "turn_end": -2.1426331999973627, "agent_text": "(신호음)", "tool_calls": []}
+{"case_id": "K05", "session_id": "K05-4239e933", "first_sound": -3.065800799995486, "spoke_before_end": true, "turn_end": -3.065789999993285, "agent_text": "(신호음)", "tool_calls": []}
+{"case_id": "K01", "session_id": "K01-5176759a", "first_sound": -2.1995905000003404, "spoke_before_end": true, "turn_end": -2.199582299996109, "agent_text": "(신호음)", "tool_calls": []}
+{"case_id": "K08", "session_id": "K08-133594ca", "first_sound": 0.7719425999966916, "spoke_before_end": false, "turn_end": 0.7719461000015144, "agent_text": "(신호음)", "tool_calls": []}
+{"case_id": "K03", "session_id": "K03-a64205fc", "first_sound": -2.5385865999996895, "spoke_before_end": true, "turn_end": -2.5385794999965583, "agent_text": "(신호음)", "tool_calls": []}
+{"case_id": "K07", "session_id": "K07-2b253a13", "first_sound": 0.7766939000066486, "spoke_before_end": false, "turn_end": 0.776701700007834, "agent_text": "(신호음)", "tool_calls": []}

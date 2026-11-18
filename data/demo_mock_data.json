@@ -1,0 +1,39 @@
+{
+  "get_order_info": [
+    {
+      "arguments": {
+        "order_id": "DEMO1001"
+      },
+      "result": {
+        "status": "ok",
+        "data": {
+          "order_id": "DEMO1001",
+          "shipping_status": "배송중"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "order_id": "DEMO2002"
+      },
+      "result": {
+        "status": "ok",
+        "data": {
+          "order_id": "DEMO2002",
+          "shipping_status": "배송완료"
+        }
+      }
+    }
+  ],
+  "request_callback": [
+    {
+      "arguments": {
+        "phone_number": "01000001234"
+      },
+      "result": {
+        "status": "ok",
+        "message": "상담원 콜백 접수"
+      }
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "default_1100_1800": {
+    "env": {
+      "AGENT_LLM_BASE_URL": "https://api.openai.com/v1",
+      "AGENT_LLM_MODEL": "gpt-4.1-mini",
+      "AGENT_LLM_API_KEY_ENV": "OPENAI_API_KEY"
+    },
+    "n": 24,
+    "interruptions": 3,
+    "errors": 0,
+    "missing_turn_end": 0,
+    "eval_first_sound_s": {
+      "p50": 2.6,
+      "p90": 2.945,
+      "n": 21
+    },
+    "eval_turn_end_s": {
+      "p50": 2.711,
+      "p90": 3.171
+    },
+    "agent_ms": {
+      "eou_commit": {
+        "p50": 1100.85,
+        "p90": 1120.04,
+        "n": 24
+      },
+      "stt_compute": {
+        "p50": 342.95,
+        "p90": 633.19,
+        "n": 24
+      },
+      "stt_wait_after_commit": {
+        "p50": 0.0,
+        "p90": 0.0
+      },
+      "llm_first_text_after_commit": {
+        "p50": 1225.1,
+        "p90": 1469.88,
+        "n": 24
+      },
+      "first_audio_after_commit": {
+        "p50": 1463.25,
+        "p90": 1763.75,
+        "n": 24
+      },
+      "first_audio_total": {
+        "p50": 2599.75,
+        "p90": 2977.53,
+        "n": 24
+      },
+      "turn_end_total": {
+        "p50": 2682.5,
+        "p90": 3167.46,
+        "n": 24
+      },
+      "tool_round_ms": {
+        "p50": 2.75,
+        "p90": 6.69
+      },
+      "tts_first_sentence_ms": {
+        "p50": 21.3,
+        "p90": 31.82
+      }
+    },
+    "per_case_first_sound": {
+      "K02": [
+        3.02,
+        2.63,
+        2.94
+      ],
+      "K06": [
+        1.78,
+        1.74,
+        2.14
+      ],
+      "K04": [
+        2.37,
+        2.45,
+        2.45
+      ],
+      "K08": [
+        2.7,
+        2.69,
+        3.18
+      ],
+      "K05": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K07": [
+        2.58,
+        2.6,
+        2.4
+      ],
+      "K03": [
+        2.58,
+        2.4,
+        2.61
+      ],
+      "K01": [
+        2.91,
+        2.61,
+        2.62
+      ]
+    },
+    "eou_reasons": {
+      "complete_text": 24
+    }
+  }
+}

@@ -1,0 +1,120 @@
+"""Agent configuration.
+
+Every value can be overridden with an environment variable (AGENT_<FIELD>, upper case).
+API keys are never stored here: only the *name* of the environment variable that holds
+the key is configured (e.g. AGENT_LLM_API_KEY_ENV=UPSTAGE_API_KEY).
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+TEAM_ROOT = HERE.parent
+REPO_ROOT = TEAM_ROOT.parent
+
+
+@dataclass
+class Config:
+    host: str = "0.0.0.0"
+    port: int = 9000
+
+    # ── end-of-utterance (EOU) detection ───────────────────────────────────
+    # vad: "webrtc" (webrtcvad + energy gate) or "energy" (RMS only, like the example server)
+    vad: str = "webrtc"
+    webrtc_aggressiveness: int = 2         # 0..3
+    energy_min_rms: float = 300.0          # frames quieter than this are never speech
+    noise_floor_ratio: float = 3.0         # speech must also exceed noise_floor * ratio
+    min_speech_ms: int = 160               # voiced run needed to open an utterance (blip filter)
+    preroll_ms: int = 300                  # audio kept before speech onset
+    stt_trigger_silence_ms: int = 400      # start speculative STT after this much silence
+    semantic_eou: bool = True              # allow early commit when the transcript looks complete
+    complete_silence_ms: int = 1100        # commit if transcript looks complete (measured sentence gaps: 0.6-0.9 s)
+    max_silence_ms: int = 1800             # commit regardless of transcript after this much silence
+    max_utterance_ms: int = 30000          # force commit for very long speech
+
+    # ── providers ──────────────────────────────────────────────────────────
+    # Defaults = models fixed for the event: gpt-4o-mini-transcribe / gpt-4.1 (or gpt-5, gpt-4o-mini) /
+    # gpt-4o-mini-tts. Local providers (faster_whisper, sapi) remain for offline work.
+    audio_base_url: str = "https://api.openai.com/v1"   # used by the openai STT/TTS providers
+    audio_api_key_env: str = "OPENAI_API_KEY"
+
+    stt_provider: str = "openai"           # openai | faster_whisper | fake
+    stt_model: str = "gpt-4o-mini-transcribe"
+    stt_language: str = "ko"
+    stt_prompt: str = "건강기능식품 쇼핑몰 고객센터 전화 상담. 주문번호 같은 코드는 영문 대문자와 숫자로 적는다."  # practice hint
+    stt_timeout_s: float = 6.0
+    stt_hedge_ms: int = 1500               # send a 2nd identical request if the 1st is this slow (0 = off)
+    whisper_model: str = "large-v3-turbo"  # faster_whisper provider only
+    stt_device: str = "auto"               # faster_whisper: auto | cuda | cpu
+    stt_compute_type: str = "auto"
+    stt_beam_size: int = 1
+    stt_workers: int = 2
+    stt_fake_text: str = ""                # only for the fake provider (tests)
+
+    llm_provider: str = "openai_compat"    # openai_compat | scripted (test double, NOT an AI)
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str = "gpt-4.1"             # allowed: gpt-4.1 | gpt-5 | gpt-4o-mini
+    llm_api_key_env: str = "OPENAI_API_KEY"
+    llm_temperature: float = 0.2           # ignored for reasoning models (gpt-5*, o*)
+    llm_max_tokens: int = 300              # reasoning models get max(this, 1024): budget includes reasoning
+    llm_token_param: str = "auto"          # auto | max_tokens | max_completion_tokens | none
+    llm_reasoning_effort: str = "auto"     # auto -> "minimal" for reasoning models, else not sent
+    llm_timeout_s: float = 12.0
+
+    tts_provider: str = "openai"           # openai | sapi (Windows, local) | tone (test double)
+    tts_model: str = "gpt-4o-mini-tts"
+    tts_voice: str = "coral"
+    tts_instructions: str = "차분하고 친절한 한국어 전화 상담원 말투. 또렷하고 약간 빠르게 말한다."
+    tts_timeout_s: float = 10.0
+    sapi_voice: str = "Korean"             # sapi provider: substring of the voice description
+    tts_rate: int = 1                      # SAPI rate -10..10
+    tts_workers: int = 2
+
+    # ── dialog / tools ─────────────────────────────────────────────────────
+    prompt_path: str = str(HERE / "prompts" / "practice_system_prompt.md")
+    phrases_path: str = str(HERE / "prompts" / "practice_phrases.json")
+    tool_timeout_s: float = 8.0
+    max_tool_rounds: int = 4
+    turn_budget_s: float = 20.0            # starter-kit evaluator gives up 25 s after speech end
+
+    # ── protocol / output ──────────────────────────────────────────────────
+    session_start_timeout_s: float = 10.0
+    send_transcript_event: bool = True     # {"type":"agent.transcript"} as in the example server
+    output_pacing: str = "burst"           # burst | realtime (unconfirmed which the official harness expects)
+    output_chunk_ms: int = 20
+
+    # ── logging ────────────────────────────────────────────────────────────
+    metrics_path: str = str(TEAM_ROOT / "runs" / "agent_metrics.jsonl")
+    log_text: bool = False                 # write transcripts / replies to the local log (off by default)
+
+    extra: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_env(cls, **overrides) -> "Config":
+        cfg = cls()
+        for f in fields(cls):
+            if f.name == "extra":
+                continue
+            raw = os.environ.get("AGENT_" + f.name.upper())
+            if raw is not None:
+                setattr(cfg, f.name, _coerce(raw, getattr(cfg, f.name)))
+        for k, v in overrides.items():
+            if v is not None:
+                setattr(cfg, k, v)
+        return cfg
+
+    def public_dict(self) -> dict:
+        """Config for logs. Contains env-var *names*, never key values."""
+        return {f.name: getattr(self, f.name) for f in fields(self) if f.name != "extra"}
+
+
+def _coerce(raw: str, default):
+    if isinstance(default, bool):
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    if isinstance(default, int):
+        return int(raw)
+    if isinstance(default, float):
+        return float(raw)
+    return raw

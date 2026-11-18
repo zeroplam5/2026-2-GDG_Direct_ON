@@ -1,0 +1,110 @@
+{
+  "default_1100_1800": {
+    "env": {
+      "AGENT_LLM_MODEL": "gpt-4o-mini"
+    },
+    "n": 24,
+    "interruptions": 3,
+    "errors": 0,
+    "missing_turn_end": 0,
+    "eval_first_sound_s": {
+      "p50": 3.635,
+      "p90": 4.16,
+      "n": 21
+    },
+    "eval_turn_end_s": {
+      "p50": 5.569,
+      "p90": 6.825
+    },
+    "agent_ms": {
+      "eou_commit": {
+        "p50": 1135.2,
+        "p90": 1392.96,
+        "n": 24
+      },
+      "stt_compute": {
+        "p50": 717.15,
+        "p90": 969.06,
+        "n": 24
+      },
+      "stt_wait_after_commit": {
+        "p50": 0.0,
+        "p90": 0.0
+      },
+      "llm_first_text_after_commit": {
+        "p50": 1292.15,
+        "p90": 1623.88,
+        "n": 24
+      },
+      "first_audio_after_commit": {
+        "p50": 2488.7,
+        "p90": 2930.53,
+        "n": 24
+      },
+      "first_audio_total": {
+        "p50": 3608.35,
+        "p90": 4147.3,
+        "n": 24
+      },
+      "turn_end_total": {
+        "p50": 5559.1,
+        "p90": 6793.13,
+        "n": 24
+      },
+      "tool_round_ms": {
+        "p50": 2.9,
+        "p90": 6.12
+      },
+      "tts_first_sentence_ms": {
+        "p50": 755.75,
+        "p90": 1079.9
+      }
+    },
+    "per_case_first_sound": {
+      "K02": [
+        5.13,
+        3.67,
+        3.64
+      ],
+      "K04": [
+        3.88,
+        3.61,
+        4.16
+      ],
+      "K06": [
+        2.35,
+        2.36,
+        3.02
+      ],
+      "K08": [
+        4.42,
+        4.04,
+        3.9
+      ],
+      "K05": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K01": [
+        3.46,
+        3.96,
+        3.55
+      ],
+      "K07": [
+        3.23,
+        3.24,
+        3.08
+      ],
+      "K03": [
+        3.99,
+        3.69,
+        3.48
+      ]
+    },
+    "eou_reasons": {
+      "max_silence": 2,
+      "complete_text": 22
+    }
+  }
+}

@@ -1,0 +1,15 @@
+# Secrets
+.env
+.env.*
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Run outputs (generated audio & logs)
+runs/**/*.wav
+runs/**/*.log
+team/runs/**/*.wav
+team/runs/**/*.log

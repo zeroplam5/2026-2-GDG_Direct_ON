@@ -1,0 +1,433 @@
+{
+  "example_rule_800": {
+    "env": {
+      "AGENT_VAD": "energy",
+      "AGENT_ENERGY_MIN_RMS": "500",
+      "AGENT_SEMANTIC_EOU": "0",
+      "AGENT_MAX_SILENCE_MS": "800"
+    },
+    "n": 24,
+    "interruptions": 15,
+    "errors": 0,
+    "missing_turn_end": 0,
+    "eval_first_sound_s": {
+      "p50": 0.907,
+      "p90": 0.916,
+      "n": 9
+    },
+    "eval_turn_end_s": {
+      "p50": 0.924,
+      "p90": 0.941
+    },
+    "agent_ms": {
+      "eou_commit": {
+        "p50": 800.85,
+        "p90": 812.33,
+        "n": 24
+      },
+      "stt_compute": {
+        "p50": 375.75,
+        "p90": 422.63,
+        "n": 24
+      },
+      "stt_wait_after_commit": {
+        "p50": 0.0,
+        "p90": 12.76
+      },
+      "llm_first_text_after_commit": {
+        "p50": 76.6,
+        "p90": 124.24,
+        "n": 24
+      },
+      "first_audio_after_commit": {
+        "p50": 93.75,
+        "p90": 153.03,
+        "n": 24
+      },
+      "first_audio_total": {
+        "p50": 887.05,
+        "p90": 960.46,
+        "n": 24
+      },
+      "turn_end_total": {
+        "p50": 916.7,
+        "p90": 985.81,
+        "n": 24
+      },
+      "tool_round_ms": {
+        "p50": 2.9,
+        "p90": 7.7
+      },
+      "tts_first_sentence_ms": {
+        "p50": 16.05,
+        "p90": 29.4
+      }
+    },
+    "per_case_first_sound": {
+      "K04": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K06": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K02": [
+        0.91,
+        0.9,
+        0.92
+      ],
+      "K03": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K05": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K08": [
+        0.91,
+        0.91,
+        0.92
+      ],
+      "K01": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K07": [
+        0.83,
+        0.85,
+        0.86
+      ]
+    },
+    "eou_reasons": {
+      "max_silence": 24
+    }
+  },
+  "semantic_700_1600": {
+    "env": {
+      "AGENT_COMPLETE_SILENCE_MS": "700",
+      "AGENT_MAX_SILENCE_MS": "1600"
+    },
+    "n": 24,
+    "interruptions": 15,
+    "errors": 0,
+    "missing_turn_end": 0,
+    "eval_first_sound_s": {
+      "p50": 0.828,
+      "p90": 1.029,
+      "n": 9
+    },
+    "eval_turn_end_s": {
+      "p50": 0.84,
+      "p90": 1.034
+    },
+    "agent_ms": {
+      "eou_commit": {
+        "p50": 714.05,
+        "p90": 834.9,
+        "n": 24
+      },
+      "stt_compute": {
+        "p50": 224.05,
+        "p90": 386.29,
+        "n": 24
+      },
+      "stt_wait_after_commit": {
+        "p50": 0.0,
+        "p90": 0.0
+      },
+      "llm_first_text_after_commit": {
+        "p50": 84.15,
+        "p90": 124.47,
+        "n": 24
+      },
+      "first_audio_after_commit": {
+        "p50": 111.1,
+        "p90": 145.86,
+        "n": 24
+      },
+      "first_audio_total": {
+        "p50": 845.25,
+        "p90": 957.42,
+        "n": 24
+      },
+      "turn_end_total": {
+        "p50": 866.7,
+        "p90": 981.72,
+        "n": 24
+      },
+      "tool_round_ms": {
+        "p50": 3.25,
+        "p90": 6.75
+      },
+      "tts_first_sentence_ms": {
+        "p50": 17.05,
+        "p90": 32.08
+      }
+    },
+    "per_case_first_sound": {
+      "K06": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K02": [
+        1.05,
+        0.9,
+        1.02
+      ],
+      "K04": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K05": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K08": [
+        0.83,
+        0.82,
+        0.83
+      ],
+      "K01": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K03": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K07": [
+        0.71,
+        0.76,
+        0.79
+      ]
+    },
+    "eou_reasons": {
+      "complete_text": 24
+    }
+  },
+  "default_1100_1800": {
+    "env": {},
+    "n": 24,
+    "interruptions": 3,
+    "errors": 0,
+    "missing_turn_end": 0,
+    "eval_first_sound_s": {
+      "p50": 1.227,
+      "p90": 1.241,
+      "n": 21
+    },
+    "eval_turn_end_s": {
+      "p50": 1.247,
+      "p90": 1.254
+    },
+    "agent_ms": {
+      "eou_commit": {
+        "p50": 1100.2,
+        "p90": 1118.08,
+        "n": 24
+      },
+      "stt_compute": {
+        "p50": 230.25,
+        "p90": 624.36,
+        "n": 24
+      },
+      "stt_wait_after_commit": {
+        "p50": 0.0,
+        "p90": 0.0
+      },
+      "llm_first_text_after_commit": {
+        "p50": 123.1,
+        "p90": 124.8,
+        "n": 24
+      },
+      "first_audio_after_commit": {
+        "p50": 141.4,
+        "p90": 154.93,
+        "n": 24
+      },
+      "first_audio_total": {
+        "p50": 1236.15,
+        "p90": 1255.07,
+        "n": 24
+      },
+      "turn_end_total": {
+        "p50": 1252.9,
+        "p90": 1275.66,
+        "n": 24
+      },
+      "tool_round_ms": {
+        "p50": 3.6,
+        "p90": 8.1
+      },
+      "tts_first_sentence_ms": {
+        "p50": 17.95,
+        "p90": 29.32
+      }
+    },
+    "per_case_first_sound": {
+      "K02": [
+        1.23,
+        1.21,
+        1.24
+      ],
+      "K06": [
+        1.21,
+        1.21,
+        1.21
+      ],
+      "K05": [
+        "INT",
+        "INT",
+        "INT"
+      ],
+      "K04": [
+        1.24,
+        1.24,
+        1.23
+      ],
+      "K08": [
+        1.26,
+        1.23,
+        1.24
+      ],
+      "K07": [
+        1.13,
+        1.15,
+        1.14
+      ],
+      "K01": [
+        1.22,
+        1.22,
+        1.24
+      ],
+      "K03": [
+        1.24,
+        1.22,
+        1.23
+      ]
+    },
+    "eou_reasons": {
+      "complete_text": 24
+    }
+  },
+  "silence_only_1500": {
+    "env": {
+      "AGENT_SEMANTIC_EOU": "0",
+      "AGENT_MAX_SILENCE_MS": "1500"
+    },
+    "n": 24,
+    "interruptions": 0,
+    "errors": 0,
+    "missing_turn_end": 0,
+    "eval_first_sound_s": {
+      "p50": 1.616,
+      "p90": 1.648,
+      "n": 24
+    },
+    "eval_turn_end_s": {
+      "p50": 1.629,
+      "p90": 1.663
+    },
+    "agent_ms": {
+      "eou_commit": {
+        "p50": 1499.75,
+        "p90": 1512.25,
+        "n": 24
+      },
+      "stt_compute": {
+        "p50": 239.2,
+        "p90": 549.37,
+        "n": 24
+      },
+      "stt_wait_after_commit": {
+        "p50": 0.0,
+        "p90": 0.0
+      },
+      "llm_first_text_after_commit": {
+        "p50": 115.7,
+        "p90": 124.58,
+        "n": 24
+      },
+      "first_audio_after_commit": {
+        "p50": 140.65,
+        "p90": 158.07,
+        "n": 24
+      },
+      "first_audio_total": {
+        "p50": 1637.5,
+        "p90": 1663.0,
+        "n": 24
+      },
+      "turn_end_total": {
+        "p50": 1653.9,
+        "p90": 1684.12,
+        "n": 24
+      },
+      "tool_round_ms": {
+        "p50": 5.75,
+        "p90": 10.82
+      },
+      "tts_first_sentence_ms": {
+        "p50": 19.85,
+        "p90": 35.11
+      }
+    },
+    "per_case_first_sound": {
+      "K02": [
+        1.64,
+        1.59,
+        1.58
+      ],
+      "K06": [
+        1.58,
+        1.59,
+        1.57
+      ],
+      "K04": [
+        1.61,
+        1.64,
+        1.65
+      ],
+      "K08": [
+        1.61,
+        1.61,
+        1.65
+      ],
+      "K07": [
+        1.55,
+        1.51,
+        1.56
+      ],
+      "K03": [
+        1.64,
+        1.65,
+        1.62
+      ],
+      "K01": [
+        1.63,
+        1.63,
+        1.64
+      ],
+      "K05": [
+        1.61,
+        1.63,
+        1.64
+      ]
+    },
+    "eou_reasons": {
+      "max_silence": 24
+    }
+  }
+}

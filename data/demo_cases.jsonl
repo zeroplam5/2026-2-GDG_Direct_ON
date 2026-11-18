@@ -1,0 +1,3 @@
+{"case_id": "DEMO1", "room_id": "DEMO1", "now": "2026-11-21 11:00", "history": [], "customer_utterance": "Hello, what time do you open?", "customer_profile": null, "_demo_only": true}
+{"case_id": "DEMO2", "room_id": "DEMO2", "now": "2026-11-21 11:00", "history": [], "customer_utterance": "My order number is demo one zero zero one. Where is my package?", "customer_profile": null, "_demo_only": true}
+{"case_id": "DEMO3", "room_id": "DEMO3", "now": "2026-11-21 11:00", "history": [], "customer_utterance": "Please call me back tomorrow.", "customer_profile": {"name": "Demo Customer", "phone": "01000001234", "email": null}, "_demo_only": true}
