@@ -1,0 +1,41 @@
+{
+  "mode": "test_doubles",
+  "env": {
+    "AGENT_STT_PROVIDER": "fake",
+    "AGENT_STT_FAKE_TEXT": "team/runs/concurrency_fake/fake_stt.json",
+    "AGENT_TTS_PROVIDER": "tone",
+    "AGENT_SEMANTIC_EOU": "0"
+  },
+  "levels": {
+    "1": {
+      "n": 24,
+      "interruptions": 0,
+      "errors": 0,
+      "missing_turn_end": 0,
+      "first_sound": [
+        1.91,
+        1.91
+      ],
+      "turn_end": [
+        1.91,
+        1.93
+      ],
+      "reply_mismatch_vs_level1": 0
+    },
+    "4": {
+      "n": 24,
+      "interruptions": 0,
+      "errors": 0,
+      "missing_turn_end": 0,
+      "first_sound": [
+        1.91,
+        1.91
+      ],
+      "turn_end": [
+        1.91,
+        1.93
+      ],
+      "reply_mismatch_vs_level1": 0
+    }
+  }
+}
