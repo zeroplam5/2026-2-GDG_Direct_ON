@@ -101,6 +101,78 @@ class OpenAITTS:
         return b"".join([c async for c in self.stream(text)])
 
 
+class GeminiTTS:
+    """Gemini TTS (11/21 official: gemini 2.5 flash TTS). NOT yet tested with a real key.
+
+    POST {base}/models/{model}:generateContent with responseModalities=["AUDIO"]; the audio comes
+    back base64 in candidates[].content.parts[].inlineData.data as 24 kHz s16le mono PCM
+    (https://ai.google.dev/gemini-api/docs/speech-generation). With gemini_tts_stream=1 the
+    :streamGenerateContent?alt=sse endpoint is used instead (not documented for TTS - measure first)."""
+    name = "gemini"
+    SRC_RATE = 24000
+
+    def __init__(self, cfg, client=None):
+        import httpx
+        key = os.environ.get(cfg.gemini_api_key_env or "", "")
+        if not key and client is None:
+            raise RuntimeError(f"env var {cfg.gemini_api_key_env!r} is not set (TTS provider gemini)")
+        self.cfg = cfg
+        self._headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
+        self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(cfg.tts_timeout_s, connect=5.0))
+
+    def _body(self, text: str) -> dict:
+        style = self.cfg.gemini_tts_style.strip()
+        return {
+            "contents": [{"parts": [{"text": f"{style} {text}" if style else text}]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.cfg.gemini_tts_voice}}},
+            },
+        }
+
+    @staticmethod
+    def _audio(obj: dict):
+        import base64
+        for cand in obj.get("candidates", []):
+            for part in (cand.get("content") or {}).get("parts", []):
+                data = (part.get("inlineData") or {}).get("data")
+                if data:
+                    yield base64.b64decode(data)
+
+    async def _raw(self, text: str):
+        import json
+        base = f"{self.cfg.gemini_base_url.rstrip('/')}/models/{self.cfg.gemini_tts_model}"
+        if self.cfg.gemini_tts_stream:
+            async with self.client.stream("POST", f"{base}:streamGenerateContent?alt=sse",
+                                          headers=self._headers, json=self._body(text)) as r:
+                if r.status_code != 200:
+                    raise RuntimeError(f"gemini tts HTTP {r.status_code}: {(await r.aread())[:200]!r}")
+                async for line in r.aiter_lines():
+                    if line.startswith("data:"):
+                        for pcm in self._audio(json.loads(line[5:])):
+                            yield pcm
+            return
+        r = await self.client.post(f"{base}:generateContent", headers=self._headers, json=self._body(text))
+        if r.status_code != 200:
+            raise RuntimeError(f"gemini tts HTTP {r.status_code}: {r.text[:200]}")
+        for pcm in self._audio(r.json()):
+            yield pcm
+
+    async def stream(self, text: str):
+        from ..audio import StreamResampler
+        rs = StreamResampler(self.SRC_RATE, RATE)
+        async for chunk in self._raw(text):
+            out = rs.process(chunk)
+            if out:
+                yield out
+        tail = rs.flush()
+        if tail:
+            yield tail
+
+    async def synth(self, text: str) -> bytes:
+        return b"".join([c async for c in self.stream(text)])
+
+
 class ToneTTS:
     """TEST DOUBLE: 440 Hz tone, 0.2 s + 40 ms per character (max 3 s)."""
     name = "tone"

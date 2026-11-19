@@ -27,26 +27,25 @@ async def main():
     a = ap.parse_args()
     loaded = load_env_file(a.env_file)
     print(f"names loaded from {a.env_file!r}: {sorted(loaded) or '-'}")
-    key = os.environ.get(a.key_env)
-    print(f"{a.key_env}: {'present' if key else 'MISSING'}")
-    if not key:
-        return
-    if a.audio:
+    if a.audio:  # uses the configured providers (AGENT_TTS_PROVIDER / AGENT_STT_PROVIDER), e.g. gemini -> soniox
         from team.agent.config import Config
-        from team.agent.providers.stt import OpenAISTT
-        from team.agent.providers.tts import OpenAITTS
+        from team.agent.providers import make_stt, make_tts
         cfg = Config.from_env()
-        tts, stt = OpenAITTS(cfg), OpenAISTT(cfg)
+        tts, stt = make_tts(cfg), make_stt(cfg)
         text = "주문번호 DEMO 일공공일 건은 현재 배송중입니다."
         t = time.perf_counter(); first = None; pcm = b""
         async for ch in tts.stream(text):
             first = first or time.perf_counter() - t
             pcm += ch
-        print(f"TTS {cfg.tts_model}/{cfg.tts_voice}: first_chunk={first:.2f}s total={time.perf_counter() - t:.2f}s audio={len(pcm) / 32000:.2f}s@16k")
+        print(f"TTS {tts.name}: first_chunk={first:.2f}s total={time.perf_counter() - t:.2f}s audio={len(pcm) / 32000:.2f}s@16k")
         r = await stt.transcribe(pcm)
-        print(f"STT {cfg.stt_model}: {r.ms / 1000:.2f}s hedged={r.detail['hedged']} -> {r.text}")
+        print(f"STT {stt.name}: {r.ms / 1000:.2f}s detail={r.detail} -> {r.text}")
         if not a.model:
             return
+    key = os.environ.get(a.key_env)
+    print(f"{a.key_env}: {'present' if key else 'MISSING'}")
+    if not key:
+        return
     from openai import AsyncOpenAI
     c = AsyncOpenAI(api_key=key, base_url=a.base_url, timeout=20, max_retries=0)
     if a.list or not a.model:

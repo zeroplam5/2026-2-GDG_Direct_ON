@@ -40,7 +40,7 @@ class Config:
     audio_base_url: str = "https://api.openai.com/v1"   # used by the openai STT/TTS providers
     audio_api_key_env: str = "OPENAI_API_KEY"
 
-    stt_provider: str = "openai"           # openai | faster_whisper | fake
+    stt_provider: str = "openai"           # openai | soniox | faster_whisper | fake
     stt_model: str = "gpt-4o-mini-transcribe"
     stt_language: str = "ko"
     stt_prompt: str = "건강기능식품 쇼핑몰 고객센터 전화 상담. 주문번호 같은 코드는 영문 대문자와 숫자로 적는다."  # practice hint
@@ -52,18 +52,24 @@ class Config:
     stt_beam_size: int = 1
     stt_workers: int = 2
     stt_fake_text: str = ""                # only for the fake provider (tests)
+    # soniox provider (11/21 official STT). Model names change: check GET https://api.soniox.com/v1/models
+    soniox_url: str = "wss://stt-rt.soniox.com/transcribe-websocket"
+    soniox_api_key_env: str = "SONIOX_API_KEY"
+    soniox_model: str = "stt-rt-v4"
+    soniox_language_hints: str = "ko"      # comma separated
+    soniox_chunk_ms: int = 100             # utterance audio is sent in chunks of this size, as fast as possible
 
     llm_provider: str = "openai_compat"    # openai_compat | scripted (test double, NOT an AI)
     llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4.1"             # allowed: gpt-4.1 | gpt-5 | gpt-4o-mini
+    llm_model: str = "gpt-4.1"             # 11/21 official: gpt-5.4-mini (earlier practice: gpt-4.1 | gpt-5 | gpt-4o-mini)
     llm_api_key_env: str = "OPENAI_API_KEY"
     llm_temperature: float = 0.2           # ignored for reasoning models (gpt-5*, o*)
     llm_max_tokens: int = 300              # reasoning models get max(this, 1024): budget includes reasoning
     llm_token_param: str = "auto"          # auto | max_tokens | max_completion_tokens | none
-    llm_reasoning_effort: str = "auto"     # auto -> "minimal" for reasoning models, else not sent
+    llm_reasoning_effort: str = "auto"     # auto -> "none" for gpt-5.x (5.1+), "minimal" for gpt-5 / o*, else not sent
     llm_timeout_s: float = 12.0
 
-    tts_provider: str = "openai"           # openai | sapi (Windows, local) | tone (test double)
+    tts_provider: str = "openai"           # openai | gemini | sapi (Windows, local) | tone (test double)
     tts_model: str = "gpt-4o-mini-tts"
     tts_voice: str = "coral"
     tts_instructions: str = "차분하고 친절한 한국어 전화 상담원 말투. 또렷하고 약간 빠르게 말한다."
@@ -71,6 +77,13 @@ class Config:
     sapi_voice: str = "Korean"             # sapi provider: substring of the voice description
     tts_rate: int = 1                      # SAPI rate -10..10
     tts_workers: int = 2
+    # gemini provider (11/21 official TTS). Output is 24 kHz s16le mono PCM per the docs
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    gemini_api_key_env: str = "GEMINI_API_KEY"
+    gemini_tts_model: str = "gemini-2.5-flash-preview-tts"
+    gemini_tts_voice: str = "Kore"
+    gemini_tts_style: str = ""             # optional prefix prompt, e.g. "친절한 상담원 말투로 읽어 주세요:" (may be read aloud - test first)
+    gemini_tts_stream: bool = False        # streamGenerateContent (not shown in the docs for TTS - test before enabling)
 
     # ── dialog / tools ─────────────────────────────────────────────────────
     prompt_path: str = str(HERE / "prompts" / "practice_system_prompt.md")

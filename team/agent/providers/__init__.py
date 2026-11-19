@@ -6,6 +6,8 @@ def make_stt(cfg):
     from . import stt
     if cfg.stt_provider == "openai":
         return stt.OpenAISTT(cfg)
+    if cfg.stt_provider == "soniox":
+        return stt.SonioxSTT(cfg)
     if cfg.stt_provider == "faster_whisper":
         return stt.FasterWhisperSTT(cfg)
     if cfg.stt_provider == "fake":
@@ -26,6 +28,8 @@ def make_tts(cfg):
     from . import tts
     if cfg.tts_provider == "openai":
         return tts.OpenAITTS(cfg)
+    if cfg.tts_provider == "gemini":
+        return tts.GeminiTTS(cfg)
     if cfg.tts_provider == "sapi":
         return tts.SapiTTS(cfg)
     if cfg.tts_provider == "tone":
