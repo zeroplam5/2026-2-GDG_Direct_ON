@@ -52,7 +52,9 @@ def model_params(cfg) -> dict:
         p[tp] = max(cfg.llm_max_tokens, 1024) if reasoning else cfg.llm_max_tokens
     eff = cfg.llm_reasoning_effort
     if eff == "auto":
-        eff = "minimal" if reasoning else ""
+        # gpt-5.1+ (e.g. gpt-5.4-mini) list none|low|medium|high|xhigh and no "minimal";
+        # gpt-5 / o-series accept "minimal" (measured 2026-11-18 for gpt-5).
+        eff = ("none" if re.match(r"gpt-5\.\d", cfg.llm_model.lower()) else "minimal") if reasoning else ""
     if eff:
         p["reasoning_effort"] = eff
     return p

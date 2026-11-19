@@ -39,9 +39,34 @@ PYTHONUTF8=1 .venv/Scripts/python eval/run_eval.py --server ws://127.0.0.1:9000 
 ```
 대회용 서버(9000)와 같은 파이프라인을 쓰고, 인식 텍스트·함수 인자/결과·발화 종료 판단·시간을 `/ws` 경로에서만 추가로 보여 줍니다. 자세한 내용은 [devui/README.md](devui/README.md)를 보세요.
 
+## 11/21 공식 모델로 실행 (Soniox STT · Gemini 2.5 Flash TTS · gpt-5.4-mini)
+운영진 공지(11/19)로 모델이 바뀌었습니다. 기본값은 아직 예전 모델(OpenAI 3종)이라 기존 실행 방법은 그대로 동작하고, 아래 환경 변수로 새 모델을 켭니다.
+```bash
+# .env (키 값은 커밋 금지)
+SONIOX_API_KEY=...
+GEMINI_API_KEY=...
+OPENAI_API_KEY=...
+AGENT_STT_PROVIDER=soniox
+AGENT_TTS_PROVIDER=gemini
+AGENT_LLM_MODEL=gpt-5.4-mini
+```
+먼저 키와 형식을 점검합니다 (Gemini로 합성한 문장을 Soniox로 다시 받아쓰고, gpt-5.4-mini 함수 호출 1회):
+```bash
+.venv/Scripts/python -m team.scripts.check_llm --audio --model gpt-5.4-mini
+```
+- **실제 키로는 아직 시험하지 않았습니다.** 문서의 형식을 흉내 낸 가짜 서버로만 확인했습니다(`team/tests/test_new_providers.py`).
+- Soniox: 지금 구조(무음 400ms에 미리 STT)에 맞춰, 호출마다 WebSocket을 열고 발화 음성을 한꺼번에 보낸 뒤 최종 글자를 받습니다. 모델명은 자주 바뀌므로 `AGENT_SONIOX_MODEL`로 바꿉니다(`GET https://api.soniox.com/v1/models`로 확인).
+- Gemini TTS: 문서상 24 kHz PCM → 16 kHz로 리샘플합니다. 스트리밍(`AGENT_GEMINI_TTS_STREAM=1`)은 문서에 TTS 예시가 없어 기본은 꺼 두었습니다. 첫 소리 지연을 재 보고 켤지 정합니다.
+- gpt-5.4-mini: 추론 모델로 분류되어 `max_completion_tokens`를 쓰고, `reasoning_effort`는 `none`을 보냅니다(5.1 이후 모델 목록에 `minimal`이 없음). Chat Completions 지원 여부는 위 점검으로 확인해야 합니다.
+
+| 설정 (`AGENT_` 접두사) | 기본값 |
+|---|---|
+| `SONIOX_MODEL`, `SONIOX_LANGUAGE_HINTS`, `SONIOX_API_KEY_ENV`, `SONIOX_URL`, `SONIOX_CHUNK_MS` | stt-rt-v4, ko, SONIOX_API_KEY, wss://stt-rt.soniox.com/transcribe-websocket, 100 |
+| `GEMINI_TTS_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TTS_STYLE`, `GEMINI_TTS_STREAM`, `GEMINI_API_KEY_ENV` | gemini-2.5-flash-preview-tts, Kore, (없음), 0, GEMINI_API_KEY |
+
 ## 테스트 방법 (4단계)
 ```bash
-# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 45초, 42개)
+# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 45초, 47개)
 .venv/Scripts/python -m pytest team/tests -q
 node --test team/devui/tests/pcm.test.mjs   # 브라우저 음성 변환 (12개)
 
@@ -90,12 +115,12 @@ team/
     policy.py         시스템 프롬프트 조립, 발신자·이력 컨텍스트, 인계 후보 키워드 (연습용)
     config.py         모든 설정 (환경 변수)
     audio.py          PCM 처리, 리샘플링, 프레임 재조립
-    providers/        stt.py(openai | faster_whisper | fake), llm.py(openai_compat | scripted), tts.py(openai | sapi | tone)
+    providers/        stt.py(openai | soniox | faster_whisper | fake), llm.py(openai_compat | scripted), tts.py(openai | gemini | sapi | tone)
     prompts/          practice_system_prompt.md, practice_phrases.json  ← 11/21 공식 매뉴얼로 교체할 파일
   devui/              브라우저 음성 테스트 화면 + 테스트 서버 (개발용, 대회 경로와 분리)
   mock/mock_api.py    lookup()을 구현한 모의 함수 서버 (원본 골격과 같은 경로·응답 형식)
   scripts/            make_practice_audio.py(한국어 연습 음성), bench.py(설정별 반복 측정)
-  tests/              pytest 34개 (모의 서버, 프로토콜, 동시성, 오류, 발화 종료, LLM 연동 형식)
+  tests/              pytest 44개 (모의 서버, 프로토콜, 동시성, 오류, 발화 종료, LLM 연동 형식, Soniox·Gemini 연동 형식)
   data/practice_ko/   팀이 만든 한국어 연습 음성 8개 + meta.json + cases.jsonl (공식 문항 아님)
   runs/               측정 결과 (bench_scripted/summary.json 등)
   docs/REPORT.md      결과 보고서

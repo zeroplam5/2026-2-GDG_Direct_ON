@@ -158,6 +158,66 @@ class OpenAISTT:
         return STTResult(text, (time.perf_counter() - t) * 1000, {"hedged": hedged})
 
 
+class SonioxSTT:
+    """Soniox real-time STT over WebSocket (11/21 official STT). NOT yet tested with a real key.
+
+    Fits the existing batch interface used by Session (speculative STT at stt_trigger_silence_ms):
+    each call opens one WebSocket, sends the utterance audio as fast as possible, signals
+    end-of-audio with an empty frame and collects the final tokens until "finished".
+    The customer's audio is SENT TO SONIOX.
+    Protocol: https://soniox.com/docs/api-reference/stt/websocket-api"""
+    name = "soniox"
+
+    def __init__(self, cfg):
+        key = os.environ.get(cfg.soniox_api_key_env or "", "")
+        if not key:
+            raise RuntimeError(f"env var {cfg.soniox_api_key_env!r} is not set (STT provider soniox)")
+        self.cfg = cfg
+        self._key = key
+
+    def _config_msg(self) -> dict:
+        return {
+            "api_key": self._key,
+            "model": self.cfg.soniox_model,
+            "audio_format": "pcm_s16le",
+            "sample_rate": 16000,
+            "num_channels": 1,
+            "language_hints": [h.strip() for h in self.cfg.soniox_language_hints.split(",") if h.strip()],
+        }
+
+    async def _once(self, pcm: bytes) -> tuple[str, dict]:
+        import websockets
+        step = max(640, 32 * self.cfg.soniox_chunk_ms)  # bytes per chunk at 16 kHz s16le
+        final: list[str] = []
+        partial = ""
+        async with websockets.connect(self.cfg.soniox_url, max_size=None, open_timeout=self.cfg.stt_timeout_s) as ws:
+            await ws.send(json.dumps(self._config_msg()))
+            for i in range(0, len(pcm), step):
+                await ws.send(pcm[i:i + step])
+            await ws.send("")  # end of audio -> server finalizes everything, then sends finished
+            async for raw in ws:
+                msg = json.loads(raw)
+                if msg.get("error_code") or msg.get("error_message"):
+                    raise RuntimeError(f"soniox error {msg.get('error_code')}: {msg.get('error_message')}")
+                tmp = []
+                for tok in msg.get("tokens", []):
+                    t = tok.get("text", "")
+                    if t in ("<end>", "<fin>"):
+                        continue
+                    (final.append(t) if tok.get("is_final") else tmp.append(t))
+                partial = "".join(tmp)
+                if msg.get("finished"):
+                    partial = ""
+                    break
+        text = ("".join(final) + partial).strip()
+        return text, {"unfinalized": bool(partial)}
+
+    async def transcribe(self, pcm: bytes, ctx: dict | None = None) -> STTResult:
+        t = time.perf_counter()
+        text, detail = await asyncio.wait_for(self._once(pcm), timeout=self.cfg.stt_timeout_s)
+        return STTResult(text, (time.perf_counter() - t) * 1000, detail)
+
+
 class FakeSTT:
     """TEST DOUBLE. Returns AGENT_STT_FAKE_TEXT, or - if that is a path to a JSON file -
     the text mapped to session.start's case_id. Does not listen to the audio."""

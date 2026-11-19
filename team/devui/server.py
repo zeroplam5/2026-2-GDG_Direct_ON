@@ -183,11 +183,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=9100)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--stt", dest="stt_provider", help="openai (default) | faster_whisper | fake")
+    ap.add_argument("--stt", dest="stt_provider", help="openai (default) | soniox | faster_whisper | fake")
     ap.add_argument("--stt-model", dest="stt_model")
     ap.add_argument("--llm", dest="llm_provider", help="openai_compat (default) | scripted (test double)")
     ap.add_argument("--llm-model", dest="llm_model")
-    ap.add_argument("--tts", dest="tts_provider", help="openai (default) | sapi | tone (test double)")
+    ap.add_argument("--tts", dest="tts_provider", help="openai (default) | gemini | sapi | tone (test double)")
     ap.add_argument("--max-silence-ms", dest="max_silence_ms", type=int)
     ap.add_argument("--complete-silence-ms", dest="complete_silence_ms", type=int)
     ap.add_argument("--metrics", dest="metrics_path", default=str(TEAM_ROOT / "runs" / "devui_metrics.jsonl"),
