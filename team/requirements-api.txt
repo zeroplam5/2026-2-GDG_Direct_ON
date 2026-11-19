@@ -1,0 +1,12 @@
+# Agent with API providers only (11/21 official models: Soniox STT, Gemini TTS, gpt-5.4-mini;
+# also the earlier OpenAI STT/TTS). No local STT (faster-whisper), no GPU, no Windows SAPI.
+# Works on macOS / Windows / Linux. team/requirements.txt (local STT + GPU) does NOT install on
+# macOS: nvidia-cublas-cu12 / nvidia-cudnn-cu12 have no macOS wheels.
+websockets==17.4
+httpx==0.28.1
+numpy==2.5.5
+scipy==1.18.1
+openai==3.55.0
+webrtcvad-wheels==2.0.14.post1
+# tests
+pytest==9.2.0

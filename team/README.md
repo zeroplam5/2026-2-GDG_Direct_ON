@@ -10,6 +10,8 @@
 uv venv --python 3.12 .venv
 uv pip install --python .venv/Scripts/python.exe -r team/requirements.txt
 ```
+- **맥에서는 `team/requirements.txt`가 설치되지 않습니다** (GPU 패키지에 맥용 파일이 없음). API 모델만 쓸 때는 어느 OS든 `team/requirements-api.txt`를 쓰세요. 환경 변수 안내는 `team/env.example`.
+- 측정 당일 절차, 외부 접속·동시 4연결 점검, 제출 압축: [docs/OPS.md](docs/OPS.md)
 - 테스트 환경: Windows 11, CPython 3.12.13(uv), RTX 3070 8GB, i5-10400F. 한국어 TTS는 Windows SAPI의 `Microsoft Heami Desktop` 음성을 사용합니다.
 - STT 모델(`large-v3-turbo`)은 처음 실행할 때 Hugging Face에서 내려받습니다(약 1.6GB, 이 PC에서는 약 5분).
 
