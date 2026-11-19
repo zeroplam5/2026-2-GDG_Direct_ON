@@ -181,7 +181,7 @@ class ToneTTS:
         self.cfg = cfg
 
     async def synth(self, text: str) -> bytes:
-        await asyncio.sleep(0.02)
+        await asyncio.sleep((self.cfg.tone_delay_ms + self.cfg.tone_delay_per_char_ms * len(text)) / 1000)
         sec = min(3.0, 0.2 + 0.04 * len(text))
         t = np.arange(int(RATE * sec)) / RATE
         return (np.sin(2 * np.pi * 440 * t) * 6000).astype(np.int16).tobytes()

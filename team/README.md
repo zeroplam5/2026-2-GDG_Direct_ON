@@ -66,7 +66,7 @@ AGENT_LLM_MODEL=gpt-5.4-mini
 
 ## 테스트 방법 (4단계)
 ```bash
-# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 45초, 47개)
+# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 45초, 53개)
 .venv/Scripts/python -m pytest team/tests -q
 node --test team/devui/tests/pcm.test.mjs   # 브라우저 음성 변환 (12개)
 
@@ -98,6 +98,7 @@ node --test team/devui/tests/pcm.test.mjs   # 브라우저 음성 변환 (12개)
 | LLM | `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY_ENV` | openai_compat, OpenAI, gpt-4.1, OPENAI_API_KEY |
 | TTS | `TTS_PROVIDER`, `TTS_MODEL`, `TTS_VOICE`, `TTS_INSTRUCTIONS` | openai, gpt-4o-mini-tts, coral, 연습용 말투 |
 | 응대 | `PROMPT_PATH`, `PHRASES_PATH`, `TURN_BUDGET_S`, `TOOL_TIMEOUT_S` | prompts/practice_*, 20, 8 |
+| 지연 줄이기 | `TOOL_ACK`(조회 중 멘트), `FIRST_CHUNK_MIN_CHARS`(첫 조각을 쉼표에서 끊기, 0=끔) — **기본 꺼짐, 팀 결정 후 켬** [docs/LATENCY.md](docs/LATENCY.md) | 0, 0 |
 | 출력 | `OUTPUT_PACING`, `SEND_TRANSCRIPT_EVENT`, `LOG_TEXT` | burst, 1, 0 |
 
 API 키 값은 코드와 로그에 들어가지 않습니다. 설정에는 키가 담긴 **환경 변수의 이름**만 적습니다.
@@ -120,7 +121,7 @@ team/
   devui/              브라우저 음성 테스트 화면 + 테스트 서버 (개발용, 대회 경로와 분리)
   mock/mock_api.py    lookup()을 구현한 모의 함수 서버 (원본 골격과 같은 경로·응답 형식)
   scripts/            make_practice_audio.py(한국어 연습 음성), bench.py(설정별 반복 측정)
-  tests/              pytest 44개 (모의 서버, 프로토콜, 동시성, 오류, 발화 종료, LLM 연동 형식, Soniox·Gemini 연동 형식)
+  tests/              pytest 50개 (모의 서버, 프로토콜, 동시성, 오류, 발화 종료, LLM 연동 형식, Soniox·Gemini 연동 형식, 지연 줄이기)
   data/practice_ko/   팀이 만든 한국어 연습 음성 8개 + meta.json + cases.jsonl (공식 문항 아님)
   runs/               측정 결과 (bench_scripted/summary.json 등)
   docs/REPORT.md      결과 보고서

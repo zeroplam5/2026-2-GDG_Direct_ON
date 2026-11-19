@@ -23,6 +23,7 @@ from .config import Config
 from .envfile import load_env_file
 from .providers import make_llm, make_stt, make_tts
 from .session import Session
+from .textutil import normalize_for_tts
 
 log = logging.getLogger("agent")
 
@@ -38,7 +39,8 @@ class App:
         self.tts = make_tts(cfg)
         log.info("providers ready in %.1fs: stt=%s llm=%s(%s) tts=%s", time.perf_counter() - t,
                  self.stt.name, self.llm.name, cfg.llm_model if self.llm.name == "openai_compat" else "-", self.tts.name)
-        self.cached: dict[str, bytes] = {}
+        self.cached: dict[str, bytes] = {}       # phrase key -> PCM (fallback phrases)
+        self.cached_text: dict[str, bytes] = {}  # exact text -> PCM (tool_ack phrases, played without TTS)
         self.http: httpx.AsyncClient | None = None
         self._mlock = threading.Lock()
         Path(cfg.metrics_path).parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +51,12 @@ class App:
                 self.cached[k] = await self.tts.synth(self.phrases[k])
             except Exception as e:
                 log.warning("pre-synthesis of %r failed (%s); will synthesize on demand", k, type(e).__name__)
+        from .dialog import ack_phrases
+        for text in (ack_phrases(self.phrases) if self.cfg.tool_ack else []):
+            try:
+                self.cached_text[text] = await self.tts.synth(normalize_for_tts(text))
+            except Exception as e:
+                log.warning("pre-synthesis of tool_ack %r failed (%s); will synthesize on demand", text, type(e).__name__)
 
     def write_metrics(self, row: dict):
         with self._mlock, open(self.cfg.metrics_path, "a", encoding="utf-8") as f:

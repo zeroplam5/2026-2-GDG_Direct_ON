@@ -84,12 +84,22 @@ class Config:
     gemini_tts_voice: str = "Kore"
     gemini_tts_style: str = ""             # optional prefix prompt, e.g. "친절한 상담원 말투로 읽어 주세요:" (may be read aloud - test first)
     gemini_tts_stream: bool = False        # streamGenerateContent (not shown in the docs for TTS - test before enabling)
+    # test doubles only: simulated latency (tone TTS: base + per character, like a non-streaming TTS)
+    tone_delay_ms: int = 20
+    tone_delay_per_char_ms: float = 0.0
+    scripted_delay_ms: int = 50
 
     # ── dialog / tools ─────────────────────────────────────────────────────
     prompt_path: str = str(HERE / "prompts" / "practice_system_prompt.md")
     phrases_path: str = str(HERE / "prompts" / "practice_phrases.json")
     tool_timeout_s: float = 8.0
     max_tool_rounds: int = 4
+    # latency: say a short pre-synthesized phrase (phrases.json "tool_ack") while functions run,
+    # only when the model asked for a function before saying anything in this turn
+    tool_ack: bool = False                  # off by default: not decided by the team / official manual yet
+    # latency: the turn's first chunk may end at a comma once it has this many characters (0 = off),
+    # so TTS starts before the first sentence is finished
+    first_chunk_min_chars: int = 0          # off by default; 8 was used in the practice measurement
     turn_budget_s: float = 20.0            # starter-kit evaluator gives up 25 s after speech end
 
     # ── protocol / output ──────────────────────────────────────────────────

@@ -67,15 +67,35 @@ class SentenceSplitter:
     ("네.") are merged with the next one so TTS is not called for a single syllable."""
 
     _END = re.compile(r"[.!?。]+\s")
+    _COMMA = re.compile(r"[,，]\s")
 
-    def __init__(self, min_chars: int = 6):
+    def __init__(self, min_chars: int = 6, early_min_chars: int = 0):
+        """early_min_chars > 0: the FIRST chunk may also end at ", " once it is at least this
+        long, so TTS can start before the first sentence is complete (later chunks: sentences)."""
         self.buf = ""
         self.pending = ""
         self.min_chars = min_chars
+        self.early_min_chars = early_min_chars
+        self.emitted = False
 
     def push(self, delta: str):
         self.buf += delta
+        out = self._push()
+        if out:
+            self.emitted = True
+        return out
+
+    def _push(self):
         out = []
+        if self.early_min_chars and not self.emitted and not self.pending:
+            end = self._END.search(self.buf)
+            for c in self._COMMA.finditer(self.buf):
+                if end and end.start() < c.start():
+                    break  # a full sentence comes first -> normal path
+                if c.start() >= self.early_min_chars:
+                    out.append(self.buf[:c.end()].strip())
+                    self.buf = self.buf[c.end():]
+                    break
         while True:
             m = self._END.search(self.buf)
             if not m:
