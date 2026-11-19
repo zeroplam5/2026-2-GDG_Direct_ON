@@ -126,7 +126,7 @@ class ScriptedLLM:
         return m[-1].group(1).replace("-", "") if m else None
 
     async def stream(self, messages, tools=None, tool_choice="auto"):
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(self.cfg.scripted_delay_ms / 1000)
         names = {t["function"]["name"] for t in (tools or [])}
         last = messages[-1]
         if last["role"] == "tool":

@@ -21,7 +21,7 @@ import time
 
 from . import policy
 from .audio import FRAME_BYTES, FRAME_MS, RATE, FrameAssembler, chunk, resample, trim_leading_silence
-from .dialog import Dialog
+from .dialog import Ack, Dialog
 from .endpointing import Endpointer
 from .textutil import looks_complete, normalize_for_tts
 from .tools_client import ToolsClient
@@ -241,7 +241,10 @@ class Session:
                 if s is None:
                     break
                 reply.append(s)
+                before = spoken["n"]
                 await self._speak_text(s, m, spoken)
+                if isinstance(s, Ack):  # a "checking..." phrase is not an answer: fallbacks must still play
+                    spoken["n"] = before
             await prod  # re-raise producer errors
         finally:
             if not prod.done():
@@ -251,6 +254,11 @@ class Session:
         """tts_ms = time until the first audio of this sentence is available
         (whole clip for non-streaming providers, first chunk for streaming ones)."""
         t = time.perf_counter()
+        cached = getattr(self.app, "cached_text", {}).get(text)
+        if cached is not None:  # pre-synthesized at startup (tool_ack): no TTS wait
+            m.setdefault("tts_ms", []).append(0.0)
+            await self._send_audio(text, cached, m, spoken)
+            return
         norm = normalize_for_tts(text)
         if hasattr(self.app.tts, "stream"):
             first = True
