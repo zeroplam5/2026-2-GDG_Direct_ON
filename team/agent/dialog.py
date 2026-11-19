@@ -22,6 +22,11 @@ class Dialog:
         self.cfg = cfg
         self.phrases = phrases
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        self.debug = None  # optional callable(kind, **data); set only by the devui test server
+
+    def _dbg(self, kind, **data):
+        if self.debug:
+            self.debug(kind, **data)
 
     async def run_turn(self, user_text: str, m: dict):
         flags = policy.handoff_flags(user_text)
@@ -36,12 +41,14 @@ class Dialog:
             text, calls = "", None
             t_req = time.perf_counter()
             m["llm_rounds"] += 1
+            self._dbg("llm.round_start", round=rnd)
             async for kind, val in self.llm.stream(self.messages, tools=schemas or None,
                                                    tool_choice="none" if last_round else "auto"):
                 if kind == "text":
                     if "t_llm_first_text" not in m:
                         m["t_llm_first_text"] = time.perf_counter()
                         m["llm_first_text_round_ms"] = round((m["t_llm_first_text"] - t_req) * 1000, 1)
+                        self._dbg("llm.first_text", round=rnd)
                     text += val
                     for s in splitter.push(val):
                         yield s
@@ -49,6 +56,8 @@ class Dialog:
                     calls = val
             for s in splitter.flush():
                 yield s
+            self._dbg("llm.round_end", round=rnd, text=text,
+                      tool_calls=[{"name": c.name, "arguments": c.arguments} for c in calls or []])
             if not calls:
                 if not text.strip():  # model returned nothing speakable
                     text = self.phrases["tool_round_limit"]

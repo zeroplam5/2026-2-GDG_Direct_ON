@@ -13,3 +13,6 @@ runs/**/*.wav
 runs/**/*.log
 team/runs/**/*.wav
 team/runs/**/*.log
+
+# local voice test UI timing log
+team/runs/devui_metrics.jsonl

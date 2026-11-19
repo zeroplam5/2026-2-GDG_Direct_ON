@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>상담원 음성 테스트</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>상담원 음성 테스트 <small>개발용 · 대회 측정기 아님</small></h1>
+  <p class="note">브라우저에서 잰 시간은 운영진 측정기의 지연과 다릅니다. 마이크 음성은 파일로 저장하지 않습니다.
+    실제 대회 데이터를 넣기 전에 <code>team/devui/README.md</code>의 개인정보 항목을 확인하세요.</p>
+</header>
+
+<main>
+  <section class="card controls">
+    <div class="row">
+      <button id="btnStart" class="primary">테스트 시작</button>
+      <button id="btnStop" disabled>중지</button>
+      <button id="btnReplay" disabled title="방금 서버로 보낸 16 kHz PCM을 다시 재생 (메모리에만 있음)">보낸 음성 다시 듣기</button>
+    </div>
+    <div class="status-row">
+      <div><span class="label">진행 상태</span><span id="status" class="pill s-idle">연결 전</span></div>
+      <div><span class="label">응답 음성 재생</span><span id="playback" class="pill s-idle">대기</span></div>
+    </div>
+    <p id="statusDetail" class="detail"></p>
+    <div class="meter-row">
+      <span class="label">마이크 레벨</span>
+      <div class="meter"><div id="meterBar"></div><div id="meterThr" title="브라우저 추정 발화 판정 기준"></div></div>
+      <span id="meterVal" class="mono">-</span>
+    </div>
+    <dl class="kv" id="sessionInfo">
+      <dt>세션 ID</dt><dd id="sid" class="mono">-</dd>
+      <dt>연결</dt><dd id="conn">-</dd>
+      <dt>서버</dt><dd id="serverInfo">-</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <h2>대화</h2>
+    <div class="turn"><span class="who">내가 한 말 (서버 STT 인식 결과)</span> <span id="userTextState" class="tag"></span>
+      <p id="userText" class="text muted">-</p></div>
+    <div class="turn"><span class="who">상담원 응답</span><p id="agentText" class="text muted">-</p></div>
+    <p id="sttNote" class="detail"></p>
+    <h3 class="sub">지난 테스트 기록 <small>(이 페이지 메모리에만 보관 · 새로고침하면 사라짐)</small></h3>
+    <ol id="transcript" class="transcript"><li class="muted">아직 없음</li></ol>
+    <div class="row"><button id="btnCopyTranscript">기록 복사</button><button id="btnClearTranscript">기록 지우기</button></div>
+  </section>
+
+  <section class="card">
+    <h2>함수 호출</h2>
+    <div id="tools" class="muted">-</div>
+    <div id="mockCheck" class="detail"></div>
+  </section>
+
+  <section class="card">
+    <h2>시간</h2>
+    <div class="table-wrap"><table id="timing"><thead><tr><th>항목</th><th>서버 기록</th><th>브라우저 관측</th></tr></thead><tbody></tbody></table></div>
+    <p class="detail">서버 기록 = 서버가 받은 마지막 음성 프레임 기준 ms (서버 VAD 판정).
+      브라우저 관측 = 브라우저가 레벨로 <b>추정</b>한 마지막 음성 기준 ms. 두 시계는 서로 빼지 않습니다.
+      “첫 재생 시작”은 오디오 예약 시각에 출력 지연 추정치를 더한 값입니다.</p>
+  </section>
+
+  <section class="card">
+    <h2>설정</h2>
+    <label>연결 대상
+      <select id="mode">
+        <option value="debug">테스트 서버 /ws (디버그 정보 포함)</option>
+        <option value="compat">호환 모드: 대회용 서버에 직접 연결 (공식 메시지만)</option>
+      </select>
+    </label>
+    <label>WebSocket URL <input id="wsUrl" class="mono" spellcheck="false"></label>
+    <label>tools_url (상담원 서버가 호출할 함수 서버) <input id="toolsUrl" class="mono" value="http://127.0.0.1:8100" spellcheck="false"></label>
+    <div class="grid2">
+      <label>now <input id="now" class="mono" spellcheck="false"></label>
+      <label>브라우저 발화 판정 레벨 (int16 RMS) <input id="vadThr" type="number" min="0" step="50" value="300"></label>
+    </div>
+    <fieldset>
+      <legend>마이크 처리 (브라우저)</legend>
+      <label class="inline"><input type="checkbox" id="ec" checked> 에코 제거</label>
+      <label class="inline"><input type="checkbox" id="ns"> 잡음 억제</label>
+      <label class="inline"><input type="checkbox" id="agc" checked> 자동 음량</label>
+    </fieldset>
+    <label>caller (JSON, 없으면 null) <textarea id="caller" rows="2" class="mono" spellcheck="false">null</textarea></label>
+    <label class="inline"><input type="checkbox" id="useHistory" checked> history 보내기</label>
+    <label>history (JSON 배열) <textarea id="history" rows="5" class="mono" spellcheck="false">[]</textarea></label>
+    <p class="warn">공식 <code>history</code> 형식은 아직 공개되지 않았습니다. 스타터킷 예시는 <code>[]</code>뿐입니다.
+      이 서버는 <code>[{"role":"user|assistant","text":"..."}]</code>를 대화 줄로 읽고, 다른 형식은 JSON 그대로 프롬프트에 넣습니다.</p>
+    <div class="row">
+      <button id="btnAddHistory" disabled>방금 결과를 history에 추가</button>
+      <button id="btnClearHistory">history 비우기</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>음성 입력 점검</h2>
+    <dl class="kv" id="audioInfo"></dl>
+  </section>
+
+  <section class="card wide">
+    <details>
+      <summary>이벤트 기록 (음성 바이너리 제외)</summary>
+      <pre id="log" class="mono"></pre>
+    </details>
+  </section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

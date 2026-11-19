@@ -32,10 +32,18 @@ PYTHONUTF8=1 .venv/Scripts/python eval/run_eval.py --server ws://127.0.0.1:9000 
   --cases team/data/practice_ko/cases.jsonl --audio team/data/practice_ko/audio \
   --mock http://127.0.0.1:8100 --out team/runs/my_run
 ```
+## 브라우저 음성 테스트 화면 (팀 내부 개발 도구)
+```bash
+.venv/Scripts/python -m team.mock.mock_api --port 8100
+.venv/Scripts/python -m team.devui.server          # http://127.0.0.1:9100 에서 직접 말하고 응답 듣기
+```
+대회용 서버(9000)와 같은 파이프라인을 쓰고, 인식 텍스트·함수 인자/결과·발화 종료 판단·시간을 `/ws` 경로에서만 추가로 보여 줍니다. 자세한 내용은 [devui/README.md](devui/README.md)를 보세요.
+
 ## 테스트 방법 (4단계)
 ```bash
-# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 45초, 39개)
+# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 45초, 42개)
 .venv/Scripts/python -m pytest team/tests -q
+node --test team/devui/tests/pcm.test.mjs   # 브라우저 음성 변환 (12개)
 
 # 2) LLM 키 사전 점검: 키 존재 여부, 모델 목록, 함수 호출 1회 (키 값은 출력하지 않음)
 .venv/Scripts/python -m team.scripts.check_llm --list
@@ -84,6 +92,7 @@ team/
     audio.py          PCM 처리, 리샘플링, 프레임 재조립
     providers/        stt.py(openai | faster_whisper | fake), llm.py(openai_compat | scripted), tts.py(openai | sapi | tone)
     prompts/          practice_system_prompt.md, practice_phrases.json  ← 11/21 공식 매뉴얼로 교체할 파일
+  devui/              브라우저 음성 테스트 화면 + 테스트 서버 (개발용, 대회 경로와 분리)
   mock/mock_api.py    lookup()을 구현한 모의 함수 서버 (원본 골격과 같은 경로·응답 형식)
   scripts/            make_practice_audio.py(한국어 연습 음성), bench.py(설정별 반복 측정)
   tests/              pytest 34개 (모의 서버, 프로토콜, 동시성, 오류, 발화 종료, LLM 연동 형식)

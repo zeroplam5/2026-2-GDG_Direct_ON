@@ -51,6 +51,10 @@ class Session:
         self.m: dict = {}
         self.closed = False
         self.ignored_frames_while_responding = 0
+        # Optional debug sink (callable taking a dict). None on the competition server path
+        # (team.agent.server); only team.devui sets it. When None nothing extra is sent.
+        self.debug = None
+        self.t0 = time.perf_counter()
 
     # ── session.start ─────────────────────────────────────────────────────
     async def _read_start(self) -> dict:
@@ -86,6 +90,7 @@ class Session:
         except Exception as e:  # connection dropped before start
             log.warning("connection closed before session.start: %r", e)
             return
+        self.t0 = time.perf_counter()
         self.sid = str(start.get("session_id") or "no-session-id")
         self.case_id = start.get("case_id")
         self.tools = ToolsClient(self.app.http, start.get("tools_url"), self.sid, self.cfg.tool_timeout_s)
@@ -94,6 +99,14 @@ class Session:
                              policy.build_system_prompt(self.app.prompt_template, start, self.app.phrases),
                              self.cfg, self.app.phrases)
         self.tools_ready = tools_task
+        if self.debug:
+            self.tools.debug = self._dbg
+            self.dialog.debug = self._dbg
+            tools_task.add_done_callback(lambda _t: self._dbg(
+                "tools", names=sorted(self.tools.names), error=self.tools.list_error))
+            self._dbg("session", session_id=self.sid, case_id=self.case_id, tools_url=start.get("tools_url"),
+                      history_len=len(start.get("history") or []), caller=bool(start.get("caller")),
+                      in_rate=self.in_rate)
         log.info("[%s] session.start case=%s tools_url=%s caller=%s history=%d",
                  self.sid, self.case_id, start.get("tools_url"), bool(start.get("caller")),
                  len(start.get("history") or []))
@@ -132,10 +145,12 @@ class Session:
         ev = self.ep.feed(frame)
         if ev == "start":
             self.m = {"t_speech_start": now}
+            self._dbg("vad", event="speech_start")
         if not self.ep.active:
             return
         if ev == "resume":
             self.m["resumes"] = self.m.get("resumes", 0) + 1
+            self._dbg("vad", event="resume", resumes=self.m["resumes"])
             if self.stt_task:
                 self.stt_task.cancel()
                 self.stt_task = None
@@ -146,6 +161,7 @@ class Session:
             self.stt_version = self.ep.version
             self.m["t_stt_start"] = now
             self.stt_task = asyncio.create_task(self._stt(self.ep.utterance_audio()))
+            self._dbg("vad", event="speculative_stt_start", silence_ms=sil)
 
         reason = None
         if self.ep.utt_ms >= self.cfg.max_utterance_ms:
@@ -166,6 +182,7 @@ class Session:
         res = await self.app.stt.transcribe(pcm, {"case_id": self.case_id, "session_id": self.sid})
         self.m["t_stt_end"] = time.perf_counter()
         self.m["stt_ms"] = round(res.ms, 1)
+        self._dbg("stt", text=res.text, ms=round(res.ms, 1))
         return res
 
     def _commit(self, reason: str, now: float):
@@ -177,6 +194,9 @@ class Session:
             self.stt_task.cancel()
         self.stt_task = None
         self.ep.reset()
+        self._dbg("eou", reason=reason, utt_ms=self.m.get("utt_ms"), silence_ms=self.m.get("silence_at_commit_ms"),
+                  completeness=self.m.get("completeness"), reuse_speculative_stt=stt_task is not None,
+                  t_last_speech_ms=self._rel(self.m.get("t_last_speech")), t_commit_ms=self._rel(now))
         self.responding = True
         self.resp_task = asyncio.create_task(self._respond(stt_task, audio, self.m))
 
@@ -193,6 +213,7 @@ class Session:
                     res = await stt_task
                     m["t_stt_ready"] = time.perf_counter()
                     user_text = res.text
+                    self._dbg("stt.final", text=user_text)
                     if not user_text.strip():
                         m["outcome"] = "not_heard"
                         await self._speak_cached("not_heard", m, spoken)
@@ -219,6 +240,7 @@ class Session:
         finally:
             await self._send_json({"type": "turn.end"})
             m["t_turn_end"] = time.perf_counter()
+            self._dbg("turn_end_sent", outcome=m.get("outcome"))
             self.responding = False
             self._write_metrics(m, user_text, " ".join(reply))
 
@@ -296,6 +318,7 @@ class Session:
             await self.ws.send(c)
             if i == 0 and "t_first_audio" not in m:
                 m["t_first_audio"] = time.perf_counter()
+                self._dbg("audio.first_sent")
             if self.cfg.output_pacing == "realtime":
                 wait = t0 + (i + 1) * self.cfg.output_chunk_ms / 1000 - time.perf_counter()
                 if wait > 0:
@@ -308,6 +331,19 @@ class Session:
             await self.ws.send(json.dumps(obj, ensure_ascii=False))
         except Exception as e:
             log.info("[%s] send failed: %s", self.sid, type(e).__name__)
+
+    # ── debug events (team.devui only) ─────────────────────────────────────
+    def _rel(self, t):
+        return round((t - self.t0) * 1000, 1) if t else None
+
+    def _dbg(self, kind: str, **data):
+        """Hand a debug event to the debug sink. No-op unless self.debug is set (devui path)."""
+        if not self.debug:
+            return
+        try:
+            self.debug({"type": "debug." + kind, "t_ms": self._rel(time.perf_counter()), **data})
+        except Exception as e:  # a debug sink must never break a turn
+            log.debug("[%s] debug sink failed: %s", self.sid, type(e).__name__)
 
     # ── metrics (timings only; transcripts only if AGENT_LOG_TEXT=1) ───────
     def _write_metrics(self, m: dict, user_text: str, reply: str):
@@ -334,6 +370,8 @@ class Session:
         if self.cfg.log_text:
             row["user_text"], row["reply_text"] = user_text, reply
         self.app.write_metrics(row)
+        # texts go to the debug client only (never to the metrics file unless log_text)
+        self._dbg("metrics", row=row, user_text=user_text, reply_text=reply)
         log.info("[%s] turn %d %s commit=%sms first_audio=%sms turn_end=%sms outcome=%s",
                  self.sid, self.turn_idx, row["eou_reason"], row["commit_ms_rel"], row["first_audio_ms_rel"],
                  row["turn_end_ms_rel"], row["outcome"])

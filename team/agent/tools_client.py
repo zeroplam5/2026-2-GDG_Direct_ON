@@ -40,6 +40,7 @@ class ToolsClient:
         self.tools: list[dict] = []
         self.log: list[dict] = []  # per-call timing for metrics (no payloads)
         self.list_error: str | None = None
+        self.debug = None  # optional callable(kind, **data); set only by the devui test server
 
     @property
     def names(self) -> set[str]:
@@ -66,11 +67,17 @@ class ToolsClient:
     async def call(self, name: str, arguments_json: str) -> dict:
         t0 = time.perf_counter()
         entry = {"name": name, "sent": False}
+        if self.debug:
+            self.debug("tool.start", name=name, arguments=arguments_json)
+        result = None
         try:
             result = await self._call(name, arguments_json, entry)
         finally:
             entry["ms"] = round((time.perf_counter() - t0) * 1000, 1)
             self.log.append(entry)
+            if self.debug:
+                self.debug("tool.end", name=name, ms=entry["ms"], sent=entry["sent"],
+                           http_status=entry.get("http_status"), result=result)
         entry["status"] = result.get("status") if isinstance(result, dict) else None
         return result
 
