@@ -597,7 +597,9 @@ function renderServerInfo(t) {
     + ` · 함수 관문 ${c.tool_gate ? '켬' : '끔'} · 출력 검사 ${c.output_guard === 'log' ? 'log(기록만, 반복 문장은 버림)' : c.output_guard}`
     + ` · 조회 중 멘트 ${c.tool_ack ? '켬' : '끔'} · 첫 조각 쉼표 끊기 ${c.first_chunk_min_chars ? c.first_chunk_min_chars + '자' : '끔'}`;
   if (p.llm === 'scripted' || p.tts === 'tone' || p.stt === 'fake') {
-    $('sttNote').textContent = '주의: 서버가 테스트 대체물(scripted/tone/fake)로 실행 중입니다. AI 응답이 아닙니다.';
+    $('sttNote').textContent = '주의: 서버가 테스트 대체물(scripted/tone/fake)로 실행 중입니다. AI 응답이 아닙니다.'
+      + (p.stt === 'fake' ? ' STT가 fake라서 마이크 소리를 인식하지 않고 AGENT_STT_FAKE_TEXT 문장(비어 있으면 빈 문장)을 돌려줍니다.'
+        + ' 실제로 인식하려면 --stt faster_whisper(로컬, 키 없음) 또는 --stt openai(키 필요)로 서버를 다시 띄우세요.' : '');
   }
 }
 

@@ -203,6 +203,10 @@ def main():
     if loaded:
         log.info("loaded env names from file: %s", ", ".join(sorted(loaded)))
     log.info("config %s", json.dumps(cfg.public_dict(), ensure_ascii=False))
+    if cfg.stt_provider == "fake":
+        log.warning("STT is the fake test double: it does NOT listen to the microphone and returns %s. "
+                    "For real recognition use --stt faster_whisper (local, no key) or --stt openai (key).",
+                    repr(cfg.stt_fake_text) if cfg.stt_fake_text else "an empty text (AGENT_STT_FAKE_TEXT is not set)")
     asyncio.run(amain(cfg))
 
 

@@ -96,11 +96,13 @@
 .venv/Scripts/python -m pytest team/tests -q
 node --test team/devui/tests/pcm.test.mjs
 
-# 브라우저 테스트 (키 없이 흐름만: 대체물)
+# 브라우저 테스트 (키 없이: 로컬 Whisper로 실제 인식 + 대체물 LLM·TTS)
 .venv/Scripts/python -m team.mock.mock_api --port 8100
-.venv/Scripts/python -m team.devui.server --stt fake --llm scripted --tts tone
+.venv/Scripts/python -m team.devui.server --stt faster_whisper --llm scripted --tts tone
 #   → Chrome/Edge에서 http://127.0.0.1:9100 → 테스트 시작 → 마이크 허용 → 한 번 말하고 기다림
-#   (--stt fake는 소리와 상관없이 AGENT_STT_FAKE_TEXT를 돌려줌. 예: AGENT_STT_FAKE_TEXT="주문번호 데모 일공공일 배송 어디쯤이에요?")
+#   scripted LLM은 주문번호가 있으면 조회, 그 밖에는 정해진 한 문장만 말함. tone TTS는 신호음.
+#   --stt fake는 마이크 소리를 듣지 않고 AGENT_STT_FAKE_TEXT를 돌려줌(비어 있으면 빈 문장 → "잘 듣지 못했습니다").
+#   흐름만 볼 때: AGENT_STT_FAKE_TEXT="주문번호 데모 일공공일 배송 어디쯤이에요?" 를 설정하고 --stt fake
 
 # 키가 있을 때 (.env의 AGENT_* 설정 그대로)
 .venv/Scripts/python -m team.devui.server
