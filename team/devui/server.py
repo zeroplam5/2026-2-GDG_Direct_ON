@@ -56,7 +56,8 @@ DEBUG_QUEUE_MAX = 2000
 HELLO_FIELDS = ("stt_provider", "stt_model", "llm_provider", "llm_model", "tts_provider", "tts_model", "tts_voice",
                 "vad", "energy_min_rms", "min_speech_ms", "stt_trigger_silence_ms", "semantic_eou",
                 "complete_silence_ms", "max_silence_ms", "max_utterance_ms", "turn_budget_s", "tool_timeout_s",
-                "output_pacing", "send_transcript_event")
+                "output_pacing", "send_transcript_event", "tool_gate", "output_guard", "tool_ack",
+                "first_chunk_min_chars", "pack_dir")
 
 
 def _response(status: int, reason: str, body: bytes, ctype: str) -> Response:

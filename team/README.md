@@ -66,7 +66,7 @@ AGENT_LLM_MODEL=gpt-5.4-mini
 
 ## 테스트 방법 (4단계)
 ```bash
-# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 45초, 53개)
+# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 45초, 92개 · 그중 3개는 알려진 한계를 표시하는 xfail)
 .venv/Scripts/python -m pytest team/tests -q
 node --test team/devui/tests/pcm.test.mjs   # 브라우저 음성 변환 (12개)
 

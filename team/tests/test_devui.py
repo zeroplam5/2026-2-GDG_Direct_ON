@@ -197,3 +197,34 @@ def test_static_whitelist_and_ws_path(cfg):
     assert idx.status_code == 200 and idx.headers["content-type"].startswith("text/html") and "테스트 시작" in idx.text
     assert js.status_code == 200 and js.headers["content-type"].startswith("text/javascript")
     assert all(r.status_code == 404 for r in bad)
+
+
+def test_blocked_call_is_reported_to_debug_sink_only(tmp_path):
+    """A call the gate blocks never reaches ToolsClient (no tool.start/end), so the page needs
+    debug.gate / debug.blocked_reply to show it. Without a debug sink nothing is emitted."""
+    from team.agent.dialog import Dialog
+    from .test_gate import CALLER, POLICY, FakeLLM, FakeTools, _rules_without_templates
+    from team.agent.gate import Gate
+
+    rules, path = _rules_without_templates(tmp_path)
+    got = []
+    for with_sink in (True, False):
+        tools = FakeTools()
+        dlg = Dialog(FakeLLM(), tools, "system", Config(rules_path=path), {"tool_round_limit": "x"},
+                     gate=Gate(rules, {"history": [], "caller": CALLER}))
+        events = []
+        if with_sink:
+            dlg.debug = lambda kind, **d: events.append((kind, d))
+
+        async def run():
+            return [s async for s in dlg.run_turn("내일 오전에 다시 전화 주실 수 있나요?", {})]
+
+        asyncio.run(run())
+        assert tools.sent == []
+        got.append(events)
+    kinds = [k for k, _ in got[0]]
+    assert "gate" in kinds and "blocked_reply" in kinds
+    gate_evt = dict(got[0])["gate"]["decisions"][0]
+    assert gate_evt["name"] == "request_callback" and gate_evt["allowed"] is False and gate_evt["reason"] == "no_consent"
+    assert "_customer_confirmation" not in gate_evt["args"]  # internal field is removed before display
+    assert got[1] == []

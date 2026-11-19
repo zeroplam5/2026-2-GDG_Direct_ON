@@ -94,6 +94,18 @@ class Config:
     phrases_path: str = str(HERE / "prompts" / "practice_phrases.json")
     tool_timeout_s: float = 8.0
     max_tool_rounds: int = 4
+    # every rule the code checks (gate, hand-off signals, consent words) lives in this one file
+    rules_path: str = str(HERE / "prompts" / "practice_rules.json")
+    # a pack folder with pack.json sets prompt_path / rules_path / phrases_path at once
+    # (practice pack: team/agent/prompts). Individually set AGENT_*_PATH values still win.
+    pack_dir: str = ""
+    # pre-execution gate (team/agent/gate.py): code checks format, grounding and customer consent
+    # before a function call is sent
+    tool_gate: bool = True
+    # output check (team/agent/output_guard.py) on every model sentence before TTS:
+    # log = record numbers found nowhere in prompt / customer words / function results,
+    # block = replace such a sentence with phrases["unverified_fallback"], off = skip
+    output_guard: str = "log"
     # latency: say a short pre-synthesized phrase (phrases.json "tool_ack") while functions run,
     # only when the model asked for a function before saying anything in this turn
     tool_ack: bool = False                  # off by default: not decided by the team / official manual yet
@@ -117,16 +129,33 @@ class Config:
     @classmethod
     def from_env(cls, **overrides) -> "Config":
         cfg = cls()
+        explicit = set()
         for f in fields(cls):
             if f.name == "extra":
                 continue
             raw = os.environ.get("AGENT_" + f.name.upper())
             if raw is not None:
                 setattr(cfg, f.name, _coerce(raw, getattr(cfg, f.name)))
+                explicit.add(f.name)
         for k, v in overrides.items():
             if v is not None:
                 setattr(cfg, k, v)
+                explicit.add(k)
+        if cfg.pack_dir:
+            cfg.apply_pack(cfg.pack_dir, keep=explicit)
         return cfg
+
+    def apply_pack(self, pack_dir: str, keep: set = frozenset()) -> None:
+        """Point prompt / rules / phrases at the files named in <pack_dir>/pack.json,
+        except fields listed in `keep` (set explicitly by the user)."""
+        import json
+        d = Path(pack_dir)
+        if not d.is_absolute():
+            d = TEAM_ROOT.parent / d
+        manifest = json.loads((d / "pack.json").read_text(encoding="utf-8"))
+        for key, attr in (("prompt", "prompt_path"), ("rules", "rules_path"), ("phrases", "phrases_path")):
+            if manifest.get(key) and attr not in keep:
+                setattr(self, attr, str(d / manifest[key]))
 
     def public_dict(self) -> dict:
         """Config for logs. Contains env-var *names*, never key values."""

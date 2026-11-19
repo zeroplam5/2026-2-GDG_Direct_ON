@@ -2,8 +2,19 @@
 
 run_turn() is an async generator of speakable sentences. Text is streamed sentence by
 sentence so TTS can start before the LLM finishes. When the model asks for functions they
-are executed through the session's ToolsClient and the results are fed back; the last
-allowed round forces tool_choice="none" so the turn always ends with words.
+are checked by the pre-execution gate (gate.py), executed through the session's ToolsClient
+and the results are fed back; the last allowed round forces tool_choice="none" so the turn
+always ends with words.
+
+When the gate blocks every call of a round:
+  * the model already asked a question in that round  -> the turn ends there, so the
+    customer does not hear the same question twice
+  * the function has a confirm_template in the rules  -> that question is said directly
+    (no second model call: faster, no gate wording leaking into the reply)
+  * otherwise                                          -> the model gets "not_executed" and
+    words the reply itself
+Every model sentence passes the output check (output_guard.py) before it is yielded.
+The system message is static instructions first and per-call context last (prompt cache).
 """
 from __future__ import annotations
 
@@ -12,7 +23,10 @@ import json
 import time
 
 from . import policy
+from .output_guard import OutputGuard
 from .textutil import SentenceSplitter
+
+TEMPLATE_REASONS = {"no_consent", "not_asked", "not_stated"}
 
 
 class Ack(str):
@@ -26,13 +40,37 @@ def ack_phrases(phrases: dict) -> list[str]:
     return [v] if isinstance(v, str) else [p for p in v if isinstance(p, str) and p.strip()]
 
 
+def plan_blocked_reply(text: str, calls, decisions, gate, rules: dict) -> tuple[str, str | None]:
+    """What to say after the gate blocked every call of a round.
+    Returns ("already_asked", None) | ("template", sentence) | ("model", None)."""
+    if text.strip() and gate.question.search(text):
+        return "already_asked", None
+    if len(calls) == 1 and decisions[0].reason in TEMPLATE_REASONS:
+        tpl = ((rules.get("functions") or {}).get(calls[0].name) or {}).get("confirm_template")
+        if tpl:
+            try:
+                return "template", tpl.format(**decisions[0].args)
+            except (KeyError, IndexError, ValueError):
+                pass
+    return "model", None
+
+
 class Dialog:
-    def __init__(self, llm, tools, system_prompt: str, cfg, phrases: dict):
+    def __init__(self, llm, tools, system_prompt: str, cfg, phrases: dict, gate=None, context: str | None = None):
         self.llm = llm
         self.tools = tools
         self.cfg = cfg
         self.phrases = phrases
-        self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        self.gate = gate  # gate.Gate or None: code checks before any function call is sent
+        self.rules = policy.load_rules(getattr(cfg, "rules_path", ""))  # hand-off signals, templates
+        self.guard = OutputGuard(getattr(cfg, "output_guard", "log"), phrases.get("unverified_fallback", ""))
+        # One system message: static instructions first (same for every call, so the provider's
+        # prompt cache can reuse it), per-call context (now, caller, history) at the end.
+        # (A separate second system message was tried on 2026-11-19; the model then wrote its
+        # reply twice in 5 of 6 text answers. Doubling also happens with one message, less
+        # clearly measured, so repeated sentences are dropped by the output check as well.)
+        content = system_prompt + ("\n\n" + context if context else "")
+        self.messages: list[dict] = [{"role": "system", "content": content}]
         self._acks = ack_phrases(phrases)
         self._ack_i = 0  # rotate so the same phrase is not repeated turn after turn
         self.debug = None  # optional callable(kind, **data); set only by the devui test server
@@ -41,14 +79,41 @@ class Dialog:
         if self.debug:
             self.debug(kind, **data)
 
+    def _last_agent_text(self, before: int) -> str | None:
+        """What the agent said last before this turn: an earlier turn of this session, else
+        None so the gate falls back to the session.start history."""
+        for msg in reversed(self.messages[:before]):
+            if msg["role"] == "assistant" and (msg.get("content") or "").strip():
+                return msg["content"]
+        return None
+
+    def _sources(self) -> str:
+        """Everything the model was given or told this session (for the output check)."""
+        return "\n".join(str(msg.get("content") or "") for msg in self.messages)
+
+    def _checked(self, sentence: str, m: dict, said: list[str]) -> str:
+        """Output check; returns "" when the sentence must not be said (e.g. already said)."""
+        out, flag = self.guard.check(sentence, self._sources(), said)
+        if flag:
+            m.setdefault("output_flags", []).append(flag)
+            self._dbg("output_guard", sentence=sentence, flag=flag)
+        if out:
+            said.append(out)
+        return out
+
     async def run_turn(self, user_text: str, m: dict):
-        flags = policy.handoff_flags(user_text)
+        flags = policy.handoff_flags(user_text, self.rules)
         m["handoff_flags"] = flags
-        self.messages.append({"role": "user", "content": policy.user_message(user_text, flags)})
+        turn_start = len(self.messages)
+        self.messages.append({"role": "user", "content": policy.user_message(user_text, flags, self.rules)})
         schemas = self.tools.openai_schemas()
+        if self.gate:
+            schemas = self.gate.augment(schemas)
+            m.setdefault("gate", [])
         m.setdefault("llm_rounds", 0)
         m.setdefault("tool_calls", [])
         spoke = False
+        said: list[str] = []  # sentences actually said this turn (after the output check)
         for rnd in range(self.cfg.max_tool_rounds + 1):
             last_round = rnd == self.cfg.max_tool_rounds
             splitter = SentenceSplitter(early_min_chars=0 if spoke else self.cfg.first_chunk_min_chars)
@@ -65,25 +130,40 @@ class Dialog:
                         self._dbg("llm.first_text", round=rnd)
                     text += val
                     for s in splitter.push(val):
-                        spoke = True
-                        yield s
+                        out = self._checked(s, m, said)
+                        if out:
+                            spoke = True
+                            yield out
                 elif kind == "tool_calls" and not last_round:
                     calls = val
             for s in splitter.flush():
-                spoke = True
-                yield s
+                out = self._checked(s, m, said)
+                if out:
+                    spoke = True
+                    yield out
             self._dbg("llm.round_end", round=rnd, text=text,
                       tool_calls=[{"name": c.name, "arguments": c.arguments} for c in calls or []])
             if not calls:
                 if not text.strip():  # model returned nothing speakable
                     text = self.phrases["tool_round_limit"]
                     yield text
-                self.messages.append({"role": "assistant", "content": text})
+                    said.append(text)
+                # history keeps what the customer actually heard this turn
+                self.messages.append({"role": "assistant", "content": " ".join(said) or text})
                 return
             self.messages.append({"role": "assistant", "content": text or None, "tool_calls": [
                 {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
                 for c in calls]})
-            if not spoke and self.cfg.tool_ack and self._acks:
+            decisions = [None] * len(calls)
+            if self.gate:
+                last_agent = self._last_agent_text(turn_start)
+                decisions = [self.gate.check(c.name, c.arguments, user_text, last_agent) for c in calls]
+                m["gate"].extend(d.log_entry(c.name) for c, d in zip(calls, decisions))
+                self._dbg("gate", decisions=[{"name": c.name, "allowed": d.allowed, "reason": d.reason,
+                                              "args": d.args, "message": d.message}
+                                             for c, d in zip(calls, decisions)])
+            will_send = any(d is None or d.allowed for d in decisions)
+            if will_send and not spoke and self.cfg.tool_ack and self._acks:
                 ack = self._acks[self._ack_i % len(self._acks)]
                 self._ack_i += 1
                 m["tool_ack"] = ack
@@ -91,10 +171,30 @@ class Dialog:
                 self._dbg("tool_ack", text=ack)
                 yield Ack(ack)  # the session plays it while the functions below run
             t_tools = time.perf_counter()
-            results = await asyncio.gather(*(self.tools.call(c.name, c.arguments) for c in calls))
+
+            async def run(c, d):
+                if d is None:
+                    return await self.tools.call(c.name, c.arguments)
+                if not d.allowed:
+                    return d.result()  # blocked: nothing is sent to tools_url
+                return await self.tools.call(c.name, json.dumps(d.args, ensure_ascii=False))
+
+            results = await asyncio.gather(*(run(c, d) for c, d in zip(calls, decisions)))
             m["tool_calls"].append({"round": rnd, "ms": round((time.perf_counter() - t_tools) * 1000, 1),
                                     "calls": [{"name": c.name, "status": r.get("status")} for c, r in zip(calls, results)]})
             for c, r in zip(calls, results):
                 self.messages.append({"role": "tool", "tool_call_id": c.id,
                                       "content": json.dumps(r, ensure_ascii=False)})
+
+            if self.gate and not will_send:  # every call of this round was blocked
+                how, sentence = plan_blocked_reply(text, calls, decisions, self.gate, self.rules)
+                m["blocked_reply"] = how
+                self._dbg("blocked_reply", how=how, sentence=sentence)
+                if how == "already_asked":  # the question was just said: do not repeat it
+                    return
+                if how == "template":
+                    self.messages.append({"role": "assistant", "content": sentence})
+                    yield sentence
+                    return
+                # "model": the model sees not_executed and words the reply in the next round
         yield self.phrases["tool_round_limit"]

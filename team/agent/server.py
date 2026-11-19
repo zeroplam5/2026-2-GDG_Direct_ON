@@ -33,6 +33,7 @@ class App:
         self.cfg = cfg
         self.prompt_template = policy.load_prompt(cfg.prompt_path)
         self.phrases = policy.load_phrases(cfg.phrases_path)
+        self.rules = policy.load_rules(cfg.rules_path)  # the one rules file (gate, hand-off, prompt section)
         t = time.perf_counter()
         self.stt = make_stt(cfg)
         self.llm = make_llm(cfg)

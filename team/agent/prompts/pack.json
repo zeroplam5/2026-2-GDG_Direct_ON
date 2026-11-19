@@ -1,0 +1,7 @@
+{
+  "_comment": "A pack = everything brand-specific the agent reads. Switch packs with AGENT_PACK_DIR=<folder with a pack.json>. Individual AGENT_PROMPT_PATH / AGENT_RULES_PATH / AGENT_PHRASES_PATH still win when set. See README.md for the 11/21 checklist.",
+  "name": "practice",
+  "prompt": "practice_system_prompt.md",
+  "rules": "practice_rules.json",
+  "phrases": "practice_phrases.json"
+}
