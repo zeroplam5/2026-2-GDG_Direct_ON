@@ -1,0 +1,30 @@
+{
+  "_comment": "PRACTICE rules pack (not from the official manual). Every rule the CODE checks lives here; the prompt .md keeps only prose (tone, how to talk). On 2026-11-21 make an official pack (see README.md). Sections: functions/_default = pre-execution gate (team/agent/gate.py) and the auto-generated [함수 실행 규칙] prompt section; confirm_template (optional, per write function) = the question said directly when the gate blocks for missing consent, filled with the call's arguments; handoff = hand-off signal keywords (policy.handoff_flags, memo only); consent = consent / refusal word patterns used by the gate. Regex values are Python re syntax.",
+
+  "arg_labels": {"order_id": "주문번호", "phone_number": "전화번호"},
+
+  "_default": {"kind": "write", "confirm": "explicit"},
+  "functions": {
+    "get_order_info": {"kind": "read", "value_args": ["order_id"]},
+    "request_callback": {"kind": "write", "confirm": "explicit", "value_args": ["phone_number"],
+                         "formats": {"phone_number": "01[016789][0-9]{7,8}"},
+                         "confirm_template": "{phone_number} 번호로 상담원 연락을 접수해 드릴까요?"},
+    "cancel_order": {"kind": "write", "confirm": "explicit", "value_args": ["order_id"],
+                     "confirm_template": "주문번호 {order_id} 주문을 취소해 드릴까요?"}
+  },
+
+  "handoff": {
+    "human_request": {"label": "사람 상담원 요청",
+                      "pattern": "상담원|사람(이랑|과|하고|한테)|직원(이랑|과|하고|한테)|연결해\\s*주"},
+    "health_issue": {"label": "건강 이상 호소 가능성",
+                     "pattern": "부작용|두드러기|가려|구토|토했|설사|어지러|호흡|숨이|응급|병원|발진|복통|이상\\s*반응"},
+    "complaint": {"label": "불만 표현", "pattern": "화가|짜증|어이가|신고|소비자원|고소"}
+  },
+
+  "consent": {
+    "negative": "아니|아뇨|잠깐|잠시만|생각(?:해|좀|을|해\\s*볼)|나중에|보류|말고|됐어요|됐습니다|필요\\s*없|하지\\s*마",
+    "affirmative": "^\\s*(?:네|예|응|맞|그래|그럼|좋)|해\\s*주세요|해\\s*줘|해\\s*주시|부탁|진행|접수해|그렇게|그걸로|좋아요|좋습니다|맞아요|맞습니다",
+    "puzzled": "^\\s*(?:네|예|뭐|뭐라고|네에)\\s*요?\\s*\\?\\s*$",
+    "question": "\\?|까요|나요|가요|실래요|시겠어요|시겠습니까|맞으세요|맞습니까|맞나요|될까요|드릴까요"
+  }
+}

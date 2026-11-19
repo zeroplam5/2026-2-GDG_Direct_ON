@@ -23,6 +23,7 @@ from . import policy
 from .audio import FRAME_BYTES, FRAME_MS, RATE, FrameAssembler, chunk, resample, trim_leading_silence
 from .dialog import Ack, Dialog
 from .endpointing import Endpointer
+from .gate import Gate
 from .textutil import looks_complete, normalize_for_tts
 from .tools_client import ToolsClient
 
@@ -91,8 +92,11 @@ class Session:
         self.tools = ToolsClient(self.app.http, start.get("tools_url"), self.sid, self.cfg.tool_timeout_s)
         tools_task = asyncio.create_task(self.tools.load())
         self.dialog = Dialog(self.app.llm, self.tools,
-                             policy.build_system_prompt(self.app.prompt_template, start, self.app.phrases),
-                             self.cfg, self.app.phrases)
+                             policy.build_static_prompt(self.app.prompt_template, self.app.phrases,
+                                                        getattr(self.app, "rules", None), start.get("now")),
+                             self.cfg, self.app.phrases,
+                             gate=Gate.from_config(self.cfg, start) if self.cfg.tool_gate else None,
+                             context=policy.build_context(start))
         self.tools_ready = tools_task
         log.info("[%s] session.start case=%s tools_url=%s caller=%s history=%d",
                  self.sid, self.case_id, start.get("tools_url"), bool(start.get("caller")),
