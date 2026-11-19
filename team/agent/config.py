@@ -58,6 +58,15 @@ class Config:
     soniox_model: str = "stt-rt-v4"
     soniox_language_hints: str = "ko"      # comma separated
     soniox_chunk_ms: int = 100             # utterance audio is sent in chunks of this size, as fast as possible
+    # end-of-utterance mode. vad (default) = local VAD + speculative STT + completeness check.
+    # soniox_stream (opt-in, NOT tested with a real key) = Soniox streaming "<end>" token decides,
+    # see team/agent/soniox_stream.py. Compare both with the same audio before choosing.
+    eou_mode: str = "vad"
+    soniox_max_endpoint_delay_ms: int = 1500   # Soniox recommended start values (team/docs/ENDPOINTING.md)
+    soniox_endpoint_latency: int = 2           # endpoint_latency_adjustment_level 0..3
+    soniox_endpoint_sensitivity: float = 0.3   # -1.0..1.0
+    soniox_min_silence_ms: int = 300           # our own VAD silence required before acting on "<end>"
+    soniox_fallback_silence_ms: int = 3000     # local silence limit if "<end>" never comes (then batch STT)
 
     llm_provider: str = "openai_compat"    # openai_compat | scripted (test double, NOT an AI)
     llm_base_url: str = "https://api.openai.com/v1"

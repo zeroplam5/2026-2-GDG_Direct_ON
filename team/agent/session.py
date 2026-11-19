@@ -24,6 +24,8 @@ from .audio import FRAME_BYTES, FRAME_MS, RATE, FrameAssembler, chunk, resample,
 from .dialog import Ack, Dialog
 from .endpointing import Endpointer
 from .gate import Gate
+from .providers.stt import STTResult
+from .soniox_stream import SonioxStream
 from .textutil import looks_complete, normalize_for_tts
 from .tools_client import ToolsClient
 
@@ -56,6 +58,8 @@ class Session:
         # (team.agent.server); only team.devui sets it. When None nothing extra is sent.
         self.debug = None
         self.t0 = time.perf_counter()
+        self.stream: SonioxStream | None = None  # only with cfg.eou_mode == "soniox_stream"
+        self.stream_end: str | None = None       # text of a "<end>" not acted on yet
 
     # ── session.start ─────────────────────────────────────────────────────
     async def _read_start(self) -> dict:
@@ -114,6 +118,14 @@ class Session:
         log.info("[%s] session.start case=%s tools_url=%s caller=%s history=%d",
                  self.sid, self.case_id, start.get("tools_url"), bool(start.get("caller")),
                  len(start.get("history") or []))
+        if self.cfg.eou_mode == "soniox_stream":
+            try:
+                self.stream = SonioxStream(self.cfg, self._stream_token, self._stream_end, self.sid)
+                self.stream.start()
+            except Exception as e:  # no key etc. -> local VAD mode for this session
+                log.warning("[%s] eou_mode=soniox_stream unavailable (%s); using local VAD", self.sid, e)
+                self.stream = None
+            self._dbg("eou_mode", mode="soniox_stream" if self.stream else "vad (fallback)")
         try:
             async for msg in self.ws:
                 if isinstance(msg, (bytes, bytearray)):
@@ -130,6 +142,8 @@ class Session:
             for t in (self.stt_task, self.resp_task, tools_task):
                 if t and not t.done():
                     t.cancel()
+            if self.stream:
+                await self.stream.close()
 
     def _on_text(self, msg: str):
         try:
@@ -142,6 +156,8 @@ class Session:
     # ── endpointing ───────────────────────────────────────────────────────
     def _on_frame(self, frame: bytes):
         now = time.perf_counter()
+        if self.stream:
+            self.stream.send(frame)  # also while responding: keeps the Soniox stream fed
         if self.responding:
             # Half-duplex baseline: no barge-in while the agent is answering.
             self.ignored_frames_while_responding += 1
@@ -161,6 +177,9 @@ class Session:
         sil = self.ep.silence_ms
         if sil == 0:
             self.m["t_last_speech"] = now
+        if self.stream and self.stream.ok:
+            self._on_frame_stream(sil, now)
+            return
         if sil >= self.cfg.stt_trigger_silence_ms and self.stt_task is None:
             self.stt_version = self.ep.version
             self.m["t_stt_start"] = now
@@ -181,6 +200,43 @@ class Session:
                 reason = "complete_text"
         if reason:
             self._commit(reason, now)
+
+    # ── eou_mode=soniox_stream (opt-in) ───────────────────────────────────
+    def _on_frame_stream(self, sil: int, now: float):
+        reason = None
+        if self.ep.utt_ms >= self.cfg.max_utterance_ms:
+            reason = "max_utterance"
+        elif sil >= self.cfg.soniox_fallback_silence_ms:
+            reason = "fallback_silence"  # no "<end>" from Soniox: batch STT on the local audio
+        elif self.stream_end is not None and sil >= self.cfg.soniox_min_silence_ms:
+            reason = "soniox_end"
+            text, self.stream_end = self.stream_end, None
+            if text.strip():
+                if self.stt_task:  # speculative STT from before the stream connected
+                    self.stt_task.cancel()
+                fut = asyncio.get_running_loop().create_future()
+                fut.set_result(STTResult(text, 0.0, {"source": "soniox_stream"}))
+                self.stt_task, self.stt_version = fut, self.ep.version
+                self.m["stt_source"] = "soniox_stream"
+            # empty text: no stt_task -> _respond runs batch STT on the utterance audio
+        if reason:
+            self.stream_end = None
+            self.stream.clear()
+            self._commit(reason, now)
+
+    def _stream_end(self, text: str):
+        if self.responding or not self.ep.active:
+            self._dbg("soniox", event="end_ignored", text=text, responding=self.responding)
+            return
+        self.stream_end = text
+        self.m["t_soniox_end"] = time.perf_counter()
+        self._dbg("soniox", event="end", text=text, silence_ms=self.ep.silence_ms)
+
+    def _stream_token(self, _t: str):
+        if self.stream_end is not None and not self.responding:
+            self.stream_end = None  # the customer went on speaking after "<end>"
+            self.m["resumes"] = self.m.get("resumes", 0) + 1
+            self._dbg("soniox", event="resume")
 
     async def _stt(self, pcm: bytes):
         res = await self.app.stt.transcribe(pcm, {"case_id": self.case_id, "session_id": self.sid})
@@ -246,6 +302,8 @@ class Session:
             m["t_turn_end"] = time.perf_counter()
             self._dbg("turn_end_sent", outcome=m.get("outcome"))
             self.responding = False
+            if self.stream:
+                self.stream.clear()  # tokens heard while the agent spoke are not the next utterance
             self._write_metrics(m, user_text, " ".join(reply))
 
     async def _pipeline(self, sentences, m, spoken, reply):
@@ -367,6 +425,8 @@ class Session:
         row = {
             "session_id": self.sid, "case_id": self.case_id, "turn": self.turn_idx,
             "eou_reason": m.get("eou_reason"), "completeness": m.get("completeness"),
+            "eou_mode": "soniox_stream" if self.stream else "vad", "stt_source": m.get("stt_source", "batch"),
+            "soniox_end_ms_rel": rel("t_soniox_end"),
             "resumes": m.get("resumes", 0), "utt_ms": m.get("utt_ms"),
             # all *_ms_rel are measured from the arrival of the last voiced frame
             "commit_ms_rel": rel("t_commit"), "stt_start_ms_rel": rel("t_stt_start"),
