@@ -37,8 +37,13 @@ def test_first_chunk_comma_too_early_or_sentence_first_is_ignored():
     assert SentenceSplitter().push("주문하신 상품 확인했고요, 지금 ") == []  # default: off
 
 
+def test_ack_is_off_by_default():
+    assert Config().tool_ack is False and Config().first_chunk_min_chars == 0
+
+
 def test_order_lookup_plays_cached_ack_first(agent, two_mocks):
     start, cfg = agent
+    cfg.tool_ack = True
     (store, murl), _ = two_mocks
 
     async def go():
@@ -67,7 +72,7 @@ def test_ack_rotates_and_can_be_disabled(mock_server):
                 out.append([s async for s in d.run_turn("주문번호 DEMO1001 배송 어디예요?", {})])
             return out
 
-    t1, t2 = asyncio.run(turns(Config(scripted_delay_ms=0)))
+    t1, t2 = asyncio.run(turns(Config(scripted_delay_ms=0, tool_ack=True)))
     assert isinstance(t1[0], Ack) and isinstance(t2[0], Ack) and t1[0] != t2[0]
     assert "배송중" in t1[1]
     off = asyncio.run(turns(Config(scripted_delay_ms=0, tool_ack=False)))
@@ -94,7 +99,7 @@ def test_ack_does_not_suppress_timeout_fallback(agent, mock_server):
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Slow)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     start, cfg = agent
-    cfg.turn_budget_s, cfg.tool_timeout_s = 1.5, 10.0
+    cfg.turn_budget_s, cfg.tool_timeout_s, cfg.tool_ack = 1.5, 10.0, True
 
     async def go():
         h = await start()

@@ -2,6 +2,8 @@
 
 2026-11-19 · 브랜치 `feature/latency` · 연습용 측정이며 공식 점수가 아닙니다.
 
+> **두 기능 모두 기본값은 꺼져 있습니다.** 운영진·팀이 정한 기능이 아니라 제안이기 때문입니다. 켜려면 `AGENT_TOOL_ACK=1`, `AGENT_FIRST_CHUNK_MIN_CHARS=8`.
+
 ## 왜
 팀 1차 측정(REPORT.md)에서 첫 소리는 p50 3.34초였고, 단계별로 발화 종료 판단 1.15초 · LLM 1.15초 · 첫 문장 TTS 0.93초였습니다.
 함수를 부르는 문항은 LLM을 두 번 부르므로 더 느립니다. 데모 점수표는 함수 문항의 속도 점수를 **(첫 소리 점수 + 조회 뒤 답 점수) ÷ 2**로 매깁니다.
@@ -10,8 +12,8 @@
 ## 무엇을 바꿨나
 | 기능 | 동작 | 설정 (기본값) |
 |---|---|---|
-| 조회 중 멘트 | 모델이 **아무 말 없이 함수부터 부르면**, 함수를 실행하는 동안 미리 합성해 둔 짧은 멘트를 바로 보냅니다. 3개 문구를 돌아가며 써서 같은 말을 반복하지 않습니다. 모델이 먼저 말을 했으면 멘트를 넣지 않습니다. | `AGENT_TOOL_ACK=1`, 문구는 `practice_phrases.json`의 `tool_ack` |
-| 첫 조각 빨리 끊기 | 턴의 첫 조각만, 마침표 전이라도 8자 이상 뒤의 쉼표에서 끊어 TTS를 먼저 시작합니다. 두 번째 조각부터는 문장 단위 그대로입니다. | `AGENT_FIRST_CHUNK_MIN_CHARS=8` (0이면 끔) |
+| 조회 중 멘트 | 모델이 **아무 말 없이 함수부터 부르면**, 함수를 실행하는 동안 미리 합성해 둔 짧은 멘트를 바로 보냅니다. 3개 문구를 돌아가며 써서 같은 말을 반복하지 않습니다. 모델이 먼저 말을 했으면 멘트를 넣지 않습니다. | `AGENT_TOOL_ACK` (기본 0), 문구는 `practice_phrases.json`의 `tool_ack` |
+| 첫 조각 빨리 끊기 | 턴의 첫 조각만, 마침표 전이라도 8자 이상 뒤의 쉼표에서 끊어 TTS를 먼저 시작합니다. 두 번째 조각부터는 문장 단위 그대로입니다. | `AGENT_FIRST_CHUNK_MIN_CHARS` (기본 0 = 끔, 측정 때는 8) |
 
 - 조회 중 멘트는 "답"으로 치지 않습니다. 그래서 시간 초과·오류 때의 안내 멘트("확인이 지연되고 있어…")는 멘트 뒤에도 그대로 나갑니다.
 - 문구는 공식 매뉴얼의 말투 규칙이 나오면 바꿔야 합니다. 매뉴얼이 채움말을 막으면 `AGENT_TOOL_ACK=0`.
@@ -41,7 +43,7 @@
 ## 실제 모델로 다시 잴 것
 ```bash
 .venv/Scripts/python -m team.mock.mock_api --port 8100 &
-.venv/Scripts/python -m team.scripts.bench --llm openai_compat --configs default_1100_1800 --repeats 3 --out team/runs/real_ack_on --agent-env "AGENT_TOOL_ACK=1"
+.venv/Scripts/python -m team.scripts.bench --llm openai_compat --configs default_1100_1800 --repeats 3 --out team/runs/real_ack_on --agent-env "AGENT_TOOL_ACK=1,AGENT_FIRST_CHUNK_MIN_CHARS=8"
 .venv/Scripts/python -m team.scripts.bench --llm openai_compat --configs default_1100_1800 --repeats 3 --out team/runs/real_ack_off --agent-env "AGENT_TOOL_ACK=0,AGENT_FIRST_CHUNK_MIN_CHARS=0"
 ```
 공식 모델을 쓸 때는 `--agent-env`에 `AGENT_STT_PROVIDER=soniox,AGENT_TTS_PROVIDER=gemini,AGENT_LLM_MODEL=gpt-5.4-mini`를 더합니다(`feature/new-models` 브랜치 필요).

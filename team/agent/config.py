@@ -96,10 +96,10 @@ class Config:
     max_tool_rounds: int = 4
     # latency: say a short pre-synthesized phrase (phrases.json "tool_ack") while functions run,
     # only when the model asked for a function before saying anything in this turn
-    tool_ack: bool = True
+    tool_ack: bool = False                  # off by default: not decided by the team / official manual yet
     # latency: the turn's first chunk may end at a comma once it has this many characters (0 = off),
     # so TTS starts before the first sentence is finished
-    first_chunk_min_chars: int = 8
+    first_chunk_min_chars: int = 0          # off by default; 8 was used in the practice measurement
     turn_budget_s: float = 20.0            # starter-kit evaluator gives up 25 s after speech end
 
     # ── protocol / output ──────────────────────────────────────────────────
