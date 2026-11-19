@@ -5,6 +5,8 @@
 
 > 이 폴더의 프롬프트·정책·매칭 규칙·연습 음성은 **연습용**이며, 공식 매뉴얼·문항·채점 기준이 아닙니다.
 
+> **`prototype` 브랜치**: 기능 브랜치 5개(new-models, latency, llm-gate, measure-ops, endpointing)와 브라우저 테스트 화면을 합친 통합본입니다. 통합 내용·검증 결과·알려진 위험은 [docs/PROTOTYPE.md](docs/PROTOTYPE.md), 11/21 실제 키 검증 절차는 [docs/API_CHECK_1121.md](docs/API_CHECK_1121.md)를 보세요. **모든 기능은 아직 실제 API 키로 검증하지 않았습니다.**
+
 ## 설치 (저장소 루트에서)
 ```bash
 uv venv --python 3.12 .venv
@@ -68,7 +70,7 @@ AGENT_LLM_MODEL=gpt-5.4-mini
 
 ## 테스트 방법 (4단계)
 ```bash
-# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 45초, 92개 · 그중 3개는 알려진 한계를 표시하는 xfail)
+# 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 50초, 98개 · 그중 3개는 알려진 한계를 표시하는 xfail)
 .venv/Scripts/python -m pytest team/tests -q
 node --test team/devui/tests/pcm.test.mjs   # 브라우저 음성 변환 (12개)
 
@@ -100,6 +102,8 @@ node --test team/devui/tests/pcm.test.mjs   # 브라우저 음성 변환 (12개)
 | LLM | `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY_ENV` | openai_compat, OpenAI, gpt-4.1, OPENAI_API_KEY |
 | TTS | `TTS_PROVIDER`, `TTS_MODEL`, `TTS_VOICE`, `TTS_INSTRUCTIONS` | openai, gpt-4o-mini-tts, coral, 연습용 말투 |
 | 응대 | `PROMPT_PATH`, `PHRASES_PATH`, `TURN_BUDGET_S`, `TOOL_TIMEOUT_S` | prompts/practice_*, 20, 8 |
+| 함수·출력 검사 | `TOOL_GATE`(실행 전 관문), `OUTPUT_GUARD`(log=근거 없는 숫자 기록만·반복 문장 버림 / block / off), `PACK_DIR`(공식 규칙 묶음 폴더) [docs/LLM_GATE.md](docs/LLM_GATE.md) | 1, log, (없음) |
+| 말 끝 판단 모드 | `EOU_MODE`: vad(기존) / soniox_stream(Soniox `<end>`, **실제 키 미검증**) [docs/PROTOTYPE.md](docs/PROTOTYPE.md) | vad |
 | 지연 줄이기 | `TOOL_ACK`(조회 중 멘트), `FIRST_CHUNK_MIN_CHARS`(첫 조각을 쉼표에서 끊기, 0=끔) — **기본 꺼짐, 팀 결정 후 켬** [docs/LATENCY.md](docs/LATENCY.md) | 0, 0 |
 | 출력 | `OUTPUT_PACING`, `SEND_TRANSCRIPT_EVENT`, `LOG_TEXT` | burst, 1, 0 |
 
@@ -122,8 +126,9 @@ team/
     prompts/          practice_system_prompt.md, practice_phrases.json  ← 11/21 공식 매뉴얼로 교체할 파일
   devui/              브라우저 음성 테스트 화면 + 테스트 서버 (개발용, 대회 경로와 분리)
   mock/mock_api.py    lookup()을 구현한 모의 함수 서버 (원본 골격과 같은 경로·응답 형식)
-  scripts/            make_practice_audio.py(한국어 연습 음성), bench.py(설정별 반복 측정)
-  tests/              pytest 50개 (모의 서버, 프로토콜, 동시성, 오류, 발화 종료, LLM 연동 형식, Soniox·Gemini 연동 형식, 지연 줄이기)
+  scripts/            make_practice_audio.py(한국어 연습 음성), bench.py(설정별 반복 측정), check_audio.py(STT·TTS 단독 점검),
+                      llm_probe.py(LLM·관문), check_concurrency.py / check_external.py(운영 점검), sweep_endpoint.py(말 끝 실험)
+  tests/              pytest (모의 서버, 프로토콜, 동시성, 오류, 발화 종료, LLM·Soniox·Gemini 연동 형식, 지연 줄이기, 관문, devui, Soniox 스트리밍 모드)
   data/practice_ko/   팀이 만든 한국어 연습 음성 8개 + meta.json + cases.jsonl (공식 문항 아님)
   runs/               측정 결과 (bench_scripted/summary.json 등)
   docs/REPORT.md      결과 보고서

@@ -151,10 +151,22 @@ team/tests/test_devui.py    pytest: 디버그 이벤트와 함수 서버 기록 
 | `debug.stt.final` | 응답에 실제로 사용한 고객 발화 텍스트 |
 | `debug.llm.round_start` / `first_text` / `round_end` | LLM 라운드, 첫 텍스트, 라운드별 텍스트와 함수 요청 |
 | `debug.tool.start` / `tool.end` | 함수 이름, 인자(원문 JSON), 결과, 소요 ms, 실제 전송 여부, HTTP 상태 |
+| `debug.gate` | 실행 전 관문 판정: 함수 이름, 허용 여부, 차단 사유, 인자(내부 동의 칸 제외), 모델에게 돌려준 안내. **막힌 호출은 함수 서버로 가지 않아 `tool.start`가 없으므로 이 이벤트로만 보임** |
+| `debug.blocked_reply` | 모두 막힌 라운드 뒤 응답 방식: `already_asked` / `template`(규칙 파일의 확인 문장) / `model` |
+| `debug.output_guard` | 출력 검사 표시: 근거 없는 숫자(`log`면 기록만, 문장은 그대로 말함) 또는 같은 턴 반복 문장(버림) |
+| `debug.tool_ack` | 조회 중 멘트 재생 (`AGENT_TOOL_ACK=1`일 때만) |
+| `debug.eou_mode` / `debug.soniox` | `AGENT_EOU_MODE=soniox_stream`일 때: 이번 세션의 실제 모드, Soniox `<end>` 수신·무시, 이어 말함 |
 | `debug.audio.first_sent` | 첫 음성 데이터 전송 |
 | `debug.turn_end_sent` | `turn.end` 전송과 결과(outcome) |
 | `debug.metrics` | 서버 metrics 한 줄과 고객 발화, 응답 텍스트 |
 | `debug.mock_calls` | 함수 서버 `GET /calls?session_id=` 기록. 공식 중계 서버에는 없을 수 있음 |
+
+## 통합 뒤 추가된 표시 (prototype, 2026-11-20)
+
+- 서버 정보 줄: 함수 관문 켬/끔, 출력 검사 모드(`log`는 기록만), 조회 중 멘트, 첫 조각 쉼표 끊기, 말 끝 판단 모드.
+- 함수 호출 카드: 관문에 막힌 호출(사유·인자·모델에게 준 안내), 막힌 뒤 응답 방식, 출력 검사 표시, 조회 중 멘트.
+- 시간 표: `AGENT_EOU_MODE=soniox_stream`이면 "Soniox 말 끝 신호(<end>) 수신" 줄이 추가됩니다.
+- 모델 이름은 서버가 실제로 쓰는 값(`soniox` / `gemini` / `gpt-5.4-mini` 등)이 그대로 보입니다. 실제 키로는 아직 보지 못했습니다.
 
 ## 한계와 후속 개선
 
