@@ -143,6 +143,16 @@ class PcmPlayer {
   }
 }
 
+const GATE_REASONS = {
+  invalid_arguments: '인자를 읽을 수 없음', invalid_format: '형식 불일치', not_grounded: '대화에 없는 값',
+  hesitation: '거절·보류·정정 표현', puzzled: '고객이 되물음', no_consent: '이번 말에서 동의를 찾지 못함',
+  not_asked: '직전 상담원 질문에 이 값이 없음', not_stated: '고객이 값을 직접 말하지 않음',
+};
+const BLOCKED_HOW = {
+  already_asked: '모델이 이미 확인 질문을 말해서 턴 종료', template: '규칙 파일의 확인 문장을 바로 말함',
+  model: '모델이 차단 안내를 보고 다음 라운드에서 답함',
+};
+
 // ── test lifecycle ──
 function newTest() {
   return {
@@ -153,6 +163,7 @@ function newTest() {
     level: 0, maxBuffered: 0, replay: [],
     firstFrameSentAt: null, firstVoice: null, lastVoice: null,
     agentTexts: [], userText: null, dbg: [], tools: [], mockCalls: null, metrics: null, eou: null,
+    gate: [], blocked: [], guardFlags: [], toolAck: null, eouMode: null,
     firstAudioRecvAt: null, firstPlayAt: null, turnEndAt: null, playbackDoneAt: null,
     audioBytesRecv: 0, audioChunks: 0, audioAfterTurnEnd: 0,
   };
@@ -368,6 +379,30 @@ function onDebug(t, msg, at) {
     case 'debug.llm.round_end':
       renderTools(t);
       break;
+    case 'debug.gate':          // pre-execution gate (llm-gate): blocked calls never reach tool.start
+      t.gate.push(msg);
+      renderTools(t);
+      break;
+    case 'debug.blocked_reply':
+      t.blocked.push(msg);
+      renderTools(t);
+      break;
+    case 'debug.output_guard':
+      t.guardFlags.push(msg);
+      renderTools(t);
+      break;
+    case 'debug.tool_ack':
+      t.toolAck = msg;
+      renderTools(t);
+      break;
+    case 'debug.eou_mode':
+      t.eouMode = msg.mode;
+      renderServerInfo(t);
+      break;
+    case 'debug.soniox':
+      if (msg.event === 'end' && t.status === 'speech') setStatus(t, 'speech', `Soniox 말 끝 신호 수신 · 로컬 무음 ${msg.silence_ms} ms (최소 무음을 채우면 확정)`);
+      if (msg.event === 'resume' && t.status === 'speech') setStatus(t, 'speech', 'Soniox 말 끝 신호 뒤 말이 이어짐 — 대기 취소');
+      break;
     case 'debug.metrics':
       t.metrics = msg;
       renderAudioInfo(t);
@@ -555,7 +590,12 @@ function renderServerInfo(t) {
   if (!h) return;
   const c = h.config || {}, p = h.providers || {};
   $('serverInfo').textContent = `STT ${p.stt}/${c.stt_model} · LLM ${p.llm}/${c.llm_model} · TTS ${p.tts}/${c.tts_model}`
-    + ` · 발화 종료: 완결 ${c.complete_silence_ms}ms / 최대 ${c.max_silence_ms}ms (VAD ${c.vad}, 에너지 하한 ${c.energy_min_rms})`;
+    + (c.eou_mode === 'soniox_stream'
+      ? ` · 발화 종료: Soniox 스트리밍 <end> (최대 지연 ${c.soniox_max_endpoint_delay_ms}ms, 최소 무음 ${c.soniox_min_silence_ms}ms, 대체 ${c.soniox_fallback_silence_ms}ms)`
+        + (t.eouMode && t.eouMode !== 'soniox_stream' ? ` → 이번 세션은 ${t.eouMode}` : '')
+      : ` · 발화 종료: 완결 ${c.complete_silence_ms}ms / 최대 ${c.max_silence_ms}ms (VAD ${c.vad}, 에너지 하한 ${c.energy_min_rms})`)
+    + ` · 함수 관문 ${c.tool_gate ? '켬' : '끔'} · 출력 검사 ${c.output_guard === 'log' ? 'log(기록만, 반복 문장은 버림)' : c.output_guard}`
+    + ` · 조회 중 멘트 ${c.tool_ack ? '켬' : '끔'} · 첫 조각 쉼표 끊기 ${c.first_chunk_min_chars ? c.first_chunk_min_chars + '자' : '끔'}`;
   if (p.llm === 'scripted' || p.tts === 'tone' || p.stt === 'fake') {
     $('sttNote').textContent = '주의: 서버가 테스트 대체물(scripted/tone/fake)로 실행 중입니다. AI 응답이 아닙니다.';
   }
@@ -571,14 +611,39 @@ function renderTools(t) {
   if (rounds.length) {
     box.appendChild(el('p', 'detail', rounds.map((r) => `LLM 라운드 ${r.msg.round}: ${r.msg.tool_calls.length ? '함수 요청 ' + r.msg.tool_calls.map((c) => c.name).join(', ') : '응답 문장'}`).join(' · ')));
   }
-  if (!t.tools.length) { box.appendChild(el('p', 'muted', '이번 턴에는 함수 호출이 없습니다.')); return; }
+  if (t.toolAck) box.appendChild(el('p', 'detail', `조회 중 멘트 재생: "${t.toolAck.text}" (미리 합성한 음성)`));
+  for (const g of t.gate) {
+    for (const d of g.decisions || []) {
+      if (d.allowed) continue;   // allowed calls appear below as tool.start / tool.end
+      const box2 = el('div', 'tool');
+      box2.appendChild(el('b', 'err', `${d.name} · 실행 전 관문에서 차단 (${GATE_REASONS[d.reason] || d.reason}) · 함수 서버로 보내지 않음`));
+      box2.appendChild(el('div', 'detail', '모델이 요청한 인자 (내부 동의 칸 제외)'));
+      box2.appendChild(el('pre', 'mono', pretty(d.args)));
+      box2.appendChild(el('div', 'detail', `모델에게 돌려준 안내: ${d.message}`));
+      box.appendChild(box2);
+    }
+  }
+  for (const b of t.blocked) {
+    box.appendChild(el('p', 'detail', `차단 뒤 응답 방식: ${BLOCKED_HOW[b.how] || b.how}` + (b.sentence ? ` — "${b.sentence}"` : '')));
+  }
+  for (const f of t.guardFlags) {
+    const fl = f.flag || {};
+    const what = fl.kind === 'repeated_sentence' ? '같은 턴에서 이미 말한 문장 → 버림'
+      : fl.kind === 'ungrounded_number' ? `근거 없는 숫자 ${(fl.values || []).join(', ')} → ${fl.action === 'block' ? '대체 문장으로 바꿈' : '기록만 (문장은 그대로 말함)'}`
+      : JSON.stringify(fl);
+    box.appendChild(el('p', 'warn', `출력 검사: ${what} · 문장 "${f.sentence}"`));
+  }
+  if (!t.tools.length) {
+    if (!t.gate.length) box.appendChild(el('p', 'muted', '이번 턴에는 함수 호출이 없습니다.'));
+    return;
+  }
   for (const c of t.tools) {
     const d = el('div', 'tool');
     const r = c.end && c.end.result;
     const isErr = c.end && (!c.end.sent || (r && r.status === 'error') || (c.end.http_status >= 400));
     let head = c.name;
     if (!c.end) head += ' · 진행 중';
-    else head += ` · ${c.end.ms} ms` + (c.end.http_status ? ` · HTTP ${c.end.http_status}` : '') + (c.end.sent ? '' : ' · 함수 서버로 보내지 않음 (서버 사전 검증에서 차단)');
+    else head += ` · ${c.end.ms} ms` + (c.end.http_status ? ` · HTTP ${c.end.http_status}` : '') + (c.end.sent ? '' : ' · 함수 서버로 보내지 않음 (ToolsClient 검사: 필수 인자 누락·정의에 없는 함수 등)');
     d.appendChild(el('b', isErr ? 'err' : '', head));
     d.appendChild(el('div', 'detail', '인자'));
     d.appendChild(el('pre', 'mono', c.args == null ? '-' : pretty(c.args)));
@@ -619,6 +684,7 @@ function renderTiming(t) {
     ['마이크 → 서버 전송 시작', null, bv(t.firstFrameSentAt)],
     ['음성 시작 (서버 VAD / 브라우저 추정)', sv(vad && vad.msg.t_ms), bv(t.firstVoice)],
     ['마지막 음성 = 기준점 (서버 VAD / 브라우저 추정)', aS != null ? 0 : null, aB != null ? 0 : null],
+    ...(first('debug.soniox', (m) => m.event === 'end') ? [['Soniox 말 끝 신호(<end>) 수신', sv(first('debug.soniox', (m) => m.event === 'end').msg.t_ms), bv(first('debug.soniox', (m) => m.event === 'end').at)]] : []),
     [`발화 종료 확정${t.eou ? ` (${t.eou.msg.reason})` : ''} · 브라우저는 수신 시각`, sv(t.eou && t.eou.msg.t_commit_ms), bv(t.eou && t.eou.at)],
     [`STT 완료${sttUsed ? ` (${sttUsed.msg.ms} ms 소요)` : ''}`, sv(sttUsed && sttUsed.msg.t_ms), bv(sttUsed && sttUsed.at)],
     ['LLM 첫 텍스트', sv(llm1 && llm1.msg.t_ms), bv(llm1 && llm1.at)],
