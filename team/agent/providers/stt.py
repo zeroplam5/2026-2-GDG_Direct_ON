@@ -20,7 +20,8 @@ from ..audio import pcm_to_float
 log = logging.getLogger("agent.stt")
 
 # Phrases Whisper is known to hallucinate on silence / noise (Korean YouTube artefacts).
-_HALLUCINATIONS = ("시청해주셔서 감사합니다", "구독과 좋아요", "MBC 뉴스", "자막 제공", "감사합니다.")
+_HALLUCINATIONS = ("시청해주셔서 감사합니다", "구독과 좋아요", "MBC 뉴스", "자막 제공", "감사합니다.",
+                  "한글자막", "자막 by", "by 한효정")  # Whisper outputs these on silence / noise (subtitle credits)
 
 
 @dataclass
