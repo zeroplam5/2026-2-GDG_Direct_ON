@@ -211,6 +211,7 @@ async function startTest() {
     t.stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
   } catch (e) { return fail(t, micErrorText(e)); }
   refreshDevices();                             // labels become visible once permission is granted
+  { const tr0 = t.stream.getAudioTracks()[0]; if (tr0) setMicStatus(`마이크: ${tr0.label || '(이름 없음)'} (이번 테스트에서 사용 중)`); }
   if (t !== T || t.finalized) { t.stream.getTracks().forEach((x) => x.stop()); return; }
 
   try {
@@ -911,6 +912,7 @@ async function refreshDevices() {
     sel.appendChild(new Option(d.label || `마이크 ${i + 1} (이름은 권한 허용 후 표시)`, d.deviceId));
   });
   if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  else if (keep && devs.some((d) => d.label)) setMicStatus('마이크: 지난번에 고른 장치가 없어 시스템 기본 장치를 씁니다. "마이크 자동 찾기"를 다시 누르세요.', 'warn');
   if (!devs.length) $('micCheck').textContent = '브라우저가 찾은 마이크가 없습니다. 장치 연결과 Windows 개인정보(마이크) 설정을 확인하세요.';
 }
 
@@ -964,6 +966,7 @@ async function micCheck() {
     out.textContent = `장치 "${track.label || '이름 없음'}"${st.sampleRate ? ` · ${st.sampleRate} Hz` : ''} · 조용할 때 ${Math.round(quiet.median)}`
       + ` · 말할 때 최대 ${Math.round(voice.peak)} → ${verdict}`;
     out.className = ok ? 'detail' : 'warn';
+    if (ok) micStatusFromSelect('점검 통과');
   } catch (e) {
     out.textContent = micErrorText(e);
     out.className = 'warn';
@@ -975,11 +978,146 @@ async function micCheck() {
   }
 }
 
+// ── automatic microphone search: open every input at once, the real mic is the one whose level rises
+// clearly when the person talks (a disconnected input stays near 0, a noise-only input stays flat) ──
+const MIC_FIND = { quietMs: 1500, talkMs: 3000, minTalk: 100, minRatio: 3 };
+let micFinding = false;
+
+function setMicStatus(text, cls = 'detail') {
+  $('micStatus').textContent = text;
+  $('micStatus').className = cls;
+}
+
+function micStatusFromSelect(note) {
+  const sel = $('micDevice');
+  const opt = sel.options[sel.selectedIndex];
+  setMicStatus(`마이크: ${opt ? opt.text : '시스템 기본 장치'}${note ? ` (${note})` : ''}`);
+}
+
+/** median / p90 of a list of levels */
+function stats(xs) {
+  const a = [...xs].sort((x, y) => x - y);
+  const q = (f) => (a.length ? a[Math.min(a.length - 1, Math.floor(f * a.length))] : 0);
+  return { median: q(0.5), p90: q(0.9) };
+}
+
+async function findMic() {
+  if (micFinding) return;
+  if (T && !T.finalized) { setMicStatus('테스트 중에는 찾을 수 없습니다. 테스트를 끝낸 뒤 누르세요.', 'warn'); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setMicStatus('이 주소에서는 마이크를 쓸 수 없습니다. http://127.0.0.1:9100 으로 여세요.', 'warn'); return;
+  }
+  micFinding = true;
+  const box = $('micFind');
+  const btn = $('btnMicFind');
+  btn.disabled = true; $('btnStart').disabled = true;
+  box.hidden = false; box.textContent = '';
+  const say = (t) => { box.textContent = t; };
+  const opened = [];   // { id, label, stream, an }
+  let ctx = null;
+  try {
+    // one permission prompt first (device names are hidden until it is granted)
+    say('마이크 권한을 확인하는 중…');
+    const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+    probe.getTracks().forEach((x) => x.stop());
+    const all = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput'
+      && d.deviceId !== 'default' && d.deviceId !== 'communications');
+    if (!all.length) throw Object.assign(new Error('no input'), { name: 'NotFoundError' });
+    ctx = new AudioContext();
+    await ctx.resume();
+    const base = micConstraints();
+    delete base.deviceId;
+    const results = await Promise.allSettled(all.map((d) => navigator.mediaDevices.getUserMedia(
+      { audio: { ...base, deviceId: { exact: d.deviceId } } })));
+    const failed = [];
+    results.forEach((r, i) => {
+      if (r.status !== 'fulfilled') { failed.push({ label: all[i].label || `장치 ${i + 1}`, err: r.reason && r.reason.name }); return; }
+      const an = ctx.createAnalyser();
+      an.fftSize = 2048;
+      ctx.createMediaStreamSource(r.value).connect(an);      // analysed only, never played
+      opened.push({ id: all[i].deviceId, label: all[i].label || `장치 ${i + 1}`, stream: r.value, an,
+        buf: new Float32Array(an.fftSize), quiet: [], talk: [] });
+    });
+    if (!opened.length) throw new Error('입력 장치를 하나도 열 수 없었습니다 (다른 프로그램이 사용 중일 수 있음).');
+    const level = (o) => {
+      o.an.getFloatTimeDomainData(o.buf);
+      let sum = 0;
+      for (let i = 0; i < o.buf.length; i++) sum += o.buf[i] * o.buf[i];
+      return Math.sqrt(sum / o.buf.length) * 32768;
+    };
+    const phase = async (ms, key, text) => {
+      const t0 = performance.now();
+      while (performance.now() - t0 < ms) {
+        await new Promise((r) => setTimeout(r, 50));
+        for (const o of opened) o[key].push(level(o));
+        const left = Math.ceil((ms - (performance.now() - t0)) / 1000);
+        say(`장치 ${opened.length}개를 동시에 듣는 중 · ${text} (${Math.max(left, 0)}초)`);
+      }
+    };
+    await phase(MIC_FIND.quietMs, 'quiet', '1단계: 조용히 있어 주세요');
+    await phase(MIC_FIND.talkMs, 'talk', '2단계: 지금 계속 말해 주세요. 예: "주문번호 데모 일공공일, 하나 둘 셋 넷"');
+
+    const scored = opened.map((o) => {
+      const q = stats(o.quiet), t = stats(o.talk);
+      const ratio = t.p90 / Math.max(q.median, 5);
+      const ok = t.p90 >= MIC_FIND.minTalk && ratio >= MIC_FIND.minRatio;
+      const why = t.p90 < 30 ? '소리 없음 (연결 안 됨·음소거)'
+        : ratio < MIC_FIND.minRatio ? '말해도 레벨 변화 없음 (잡음만 들어옴)'
+        : t.p90 < MIC_FIND.minTalk ? '목소리가 너무 작음' : '목소리 감지';
+      return { ...o, q, t, ratio, ok, why };
+    }).sort((a, b) => (b.ok - a.ok) || (b.ratio - a.ratio));
+    const best = scored.find((x) => x.ok);
+
+    box.textContent = '';
+    const tbl = el('table', 'compact');
+    const head = el('tr');
+    for (const h of ['장치', '조용할 때', '말할 때', '변화', '판정']) head.appendChild(el('th', null, h));
+    tbl.appendChild(head);
+    for (const x of scored) {
+      const tr = el('tr', x === best ? 'best' : null);
+      tr.append(el('td', null, (x === best ? '✔ ' : '') + x.label), el('td', 'num', String(Math.round(x.q.median))),
+        el('td', 'num', String(Math.round(x.t.p90))), el('td', 'num', `${x.ratio.toFixed(1)}배`), el('td', null, x.why));
+      tbl.appendChild(tr);
+    }
+    for (const f of failed) {
+      const tr = el('tr');
+      tr.append(el('td', null, f.label), el('td', 'num', '—'), el('td', 'num', '—'), el('td', 'num', '—'),
+        el('td', null, `열 수 없음 (${f.err || '오류'})`));
+      tbl.appendChild(tr);
+    }
+    box.appendChild(tbl);
+    await refreshDevices();
+    if (best) {
+      $('micDevice').value = best.id;
+      saveSettings();
+      micStatusFromSelect('자동 찾기로 선택됨');
+      box.appendChild(el('p', 'detail', `"${best.label}"을(를) 골랐습니다. 다음 테스트부터 이 장치를 씁니다.`));
+    } else {
+      setMicStatus('마이크: 목소리가 들어오는 장치를 찾지 못했습니다. 아래 표와 안내를 확인하세요.', 'warn');
+      box.appendChild(el('p', 'warn', '목소리가 들어오는 장치가 없습니다. 마이크가 꽂혀 있는지, 음소거가 아닌지, '
+        + 'Windows 설정 → 개인 정보 및 보안 → 마이크에서 데스크톱 앱 접근이 켜져 있는지 확인한 뒤 다시 찾으세요.'));
+    }
+  } catch (e) {
+    say(micErrorText(e));
+    setMicStatus('마이크: 찾기 실패', 'warn');
+  } finally {
+    for (const o of opened) o.stream.getTracks().forEach((x) => x.stop());
+    if (ctx) ctx.close().catch(() => {});
+    btn.disabled = false;
+    if (!T || T.finalized) $('btnStart').disabled = false;
+    micFinding = false;
+  }
+}
+
 $('btnMicCheck').onclick = micCheck;
+$('btnMicFind').onclick = findMic;
 $('btnMicRefresh').onclick = refreshDevices;
-$('micDevice').onchange = saveSettings;
+$('micDevice').onchange = () => { saveSettings(); micStatusFromSelect('직접 선택'); };
 if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) navigator.mediaDevices.ondevicechange = refreshDevices;
-refreshDevices();
+refreshDevices().then(() => {
+  if ($('micDevice').value) micStatusFromSelect('지난번에 고른 장치');
+  else setMicStatus('마이크: 시스템 기본 장치 · 처음이면 "마이크 자동 찾기"를 먼저 눌러 실제 마이크를 고르세요.', 'warn');
+});
 
 $('btnStart').onclick = () => { startTest().catch((e) => T && fail(T, `예상하지 못한 오류: ${e.message || e}`)); };
 $('btnStop').onclick = stopTest;

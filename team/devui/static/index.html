@@ -19,7 +19,10 @@
       <button id="btnStart" class="primary">테스트 시작</button>
       <button id="btnStop" disabled>중지</button>
       <button id="btnReplay" disabled title="방금 서버로 보낸 16 kHz PCM을 다시 재생 (메모리에만 있음)">보낸 음성 다시 듣기</button>
+      <button id="btnMicFind" title="모든 입력 장치를 동시에 열어, 말할 때 레벨이 가장 크게 바뀌는 장치를 고릅니다 (서버 연결 없음)">마이크 자동 찾기</button>
     </div>
+    <p id="micStatus" class="detail">마이크: 시스템 기본 장치 (아직 확인 안 함)</p>
+    <div id="micFind" class="mic-find" hidden></div>
     <div class="status-row">
       <div><span class="label">진행 상태</span><span id="status" class="pill s-idle">연결 전</span></div>
       <div><span class="label">응답 음성 재생</span><span id="playback" class="pill s-idle">대기</span></div>

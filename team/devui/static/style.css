@@ -97,3 +97,8 @@ td.num { font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
 .criteria table.compact { margin: 6px 0 10px; }
 .criteria ul { padding-left: 18px; }
 h2 small { font-size: 12px; font-weight: 500; }
+/* microphone search */
+.mic-find { margin-top: 8px; font-size: 13px; }
+.mic-find table { margin-top: 4px; }
+.mic-find tr.best td { font-weight: 700; color: var(--ok-t); }
+#micStatus.warn { margin-top: 8px; }
