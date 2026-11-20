@@ -1,6 +1,6 @@
 # DIRECT:ON 음성 상담 AI — 스타터킷 원본 vs 팀 1차 결과 비교
 
-2026-11-19 · 원문: [Claude Docs 문서](https://claude.ai/artifact/Pg16iYz3zsxqc5HMgG31ks) · 실행 방법: [team/README.md](../README.md)
+2026-11-19 · 원문: [Claude Docs 문서](https://claude.ai/artifact/Pg16iYz3zsxqc5HMgG31ks) · 실행 방법: [README.md](../../README.md)
 
 > 모든 수치는 스타터킷 측정기로 잰 **연습용 결과**이며 공식 점수가 아닙니다.
 > 이전 보고서는 [archive/](archive/)에 보관했고, 이 문서에서는 다루지 않습니다.
