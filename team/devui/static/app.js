@@ -980,7 +980,10 @@ async function micCheck() {
 
 // ── automatic microphone search: open every input at once, the real mic is the one whose level rises
 // clearly when the person talks (a disconnected input stays near 0, a noise-only input stays flat) ──
-const MIC_FIND = { quietMs: 1500, talkMs: 3000, minTalk: 100, minRatio: 3 };
+// ratio = talking p90 / quiet median, measured on the RAW signal (browser processing off: automatic gain
+// raises a quiet room and lowers loud speech, which squeezes the ratio; seen 2026-11-20: a webcam mic
+// with real speech gave only 2.8x with gain on). >= okRatio: voice; >= weakRatio: weak voice.
+const MIC_FIND = { quietMs: 1500, talkMs: 3000, minTalk: 50, okRatio: 2, weakRatio: 1.5 };
 let micFinding = false;
 
 function setMicStatus(text, cls = 'detail') {
@@ -1025,10 +1028,10 @@ async function findMic() {
     if (!all.length) throw Object.assign(new Error('no input'), { name: 'NotFoundError' });
     ctx = new AudioContext();
     await ctx.resume();
-    const base = micConstraints();
-    delete base.deviceId;
+    // compare devices on the raw signal: no gain control, noise suppression or echo cancellation
+    const raw = { channelCount: { ideal: 1 }, echoCancellation: false, noiseSuppression: false, autoGainControl: false };
     const results = await Promise.allSettled(all.map((d) => navigator.mediaDevices.getUserMedia(
-      { audio: { ...base, deviceId: { exact: d.deviceId } } })));
+      { audio: { ...raw, deviceId: { exact: d.deviceId } } })));
     const failed = [];
     results.forEach((r, i) => {
       if (r.status !== 'fulfilled') { failed.push({ label: all[i].label || `장치 ${i + 1}`, err: r.reason && r.reason.name }); return; }
@@ -1060,38 +1063,54 @@ async function findMic() {
     const scored = opened.map((o) => {
       const q = stats(o.quiet), t = stats(o.talk);
       const ratio = t.p90 / Math.max(q.median, 5);
-      const ok = t.p90 >= MIC_FIND.minTalk && ratio >= MIC_FIND.minRatio;
-      const why = t.p90 < 30 ? '소리 없음 (연결 안 됨·음소거)'
-        : ratio < MIC_FIND.minRatio ? '말해도 레벨 변화 없음 (잡음만 들어옴)'
-        : t.p90 < MIC_FIND.minTalk ? '목소리가 너무 작음' : '목소리 감지';
-      return { ...o, q, t, ratio, ok, why };
-    }).sort((a, b) => (b.ok - a.ok) || (b.ratio - a.ratio));
-    const best = scored.find((x) => x.ok);
+      const silent = t.p90 < 30;
+      const ok = !silent && t.p90 >= MIC_FIND.minTalk && ratio >= MIC_FIND.okRatio;
+      const weak = !silent && !ok && ratio >= MIC_FIND.weakRatio;
+      const why = silent ? '소리 없음 (연결 안 됨·음소거)'
+        : ok ? '목소리 감지'
+        : weak ? '약하게 감지 (가능성 있음)'
+        : ratio < MIC_FIND.weakRatio ? '말해도 레벨 변화 없음 (잡음만 들어옴)' : '목소리가 너무 작음';
+      return { ...o, q, t, ratio, ok, weak, why };
+    }).sort((a, b) => (b.ok - a.ok) || (b.weak - a.weak) || (b.ratio - a.ratio));
+    // best = the clearest voice; if none is clear, the most likely one (weak), flagged as uncertain
+    const best = scored.find((x) => x.ok) || scored.find((x) => x.weak);
 
     box.textContent = '';
     const tbl = el('table', 'compact');
     const head = el('tr');
-    for (const h of ['장치', '조용할 때', '말할 때', '변화', '판정']) head.appendChild(el('th', null, h));
+    for (const h of ['장치', '조용할 때', '말할 때', '변화', '판정', '']) head.appendChild(el('th', null, h));
     tbl.appendChild(head);
+    const useDevice = (x, note) => {
+      $('micDevice').value = x.id;
+      saveSettings();
+      micStatusFromSelect(note);
+      for (const r of tbl.querySelectorAll('tr.best')) r.classList.remove('best');
+      x.row.classList.add('best');
+    };
     for (const x of scored) {
-      const tr = el('tr', x === best ? 'best' : null);
-      tr.append(el('td', null, (x === best ? '✔ ' : '') + x.label), el('td', 'num', String(Math.round(x.q.median))),
-        el('td', 'num', String(Math.round(x.t.p90))), el('td', 'num', `${x.ratio.toFixed(1)}배`), el('td', null, x.why));
+      const tr = el('tr');
+      const use = el('button', 'small', '이 장치 쓰기');
+      use.onclick = () => useDevice(x, '직접 선택');
+      const cell = el('td'); cell.appendChild(use);
+      tr.append(el('td', null, x.label), el('td', 'num', String(Math.round(x.q.median))),
+        el('td', 'num', String(Math.round(x.t.p90))), el('td', 'num', `${x.ratio.toFixed(1)}배`), el('td', null, x.why), cell);
+      x.row = tr;
       tbl.appendChild(tr);
     }
     for (const f of failed) {
       const tr = el('tr');
       tr.append(el('td', null, f.label), el('td', 'num', '—'), el('td', 'num', '—'), el('td', 'num', '—'),
-        el('td', null, `열 수 없음 (${f.err || '오류'})`));
+        el('td', null, `열 수 없음 (${f.err || '오류'})`), el('td'));
       tbl.appendChild(tr);
     }
     box.appendChild(tbl);
     await refreshDevices();
     if (best) {
-      $('micDevice').value = best.id;
-      saveSettings();
-      micStatusFromSelect('자동 찾기로 선택됨');
-      box.appendChild(el('p', 'detail', `"${best.label}"을(를) 골랐습니다. 다음 테스트부터 이 장치를 씁니다.`));
+      useDevice(best, best.ok ? '자동 찾기로 선택됨' : '자동 찾기: 약하게 감지된 장치');
+      box.appendChild(el('p', best.ok ? 'detail' : 'warn', best.ok
+        ? `"${best.label}"을(를) 골랐습니다. 다음 테스트부터 이 장치를 씁니다. 다른 장치를 쓰려면 표에서 "이 장치 쓰기"를 누르세요.`
+        : `목소리가 뚜렷한 장치는 없어서 가장 가능성 높은 "${best.label}"을(를) 골랐습니다. `
+          + '마이크에 더 가까이에서 다시 찾거나, 설정 카드의 "마이크 점검"으로 확인하세요.'));
     } else {
       setMicStatus('마이크: 목소리가 들어오는 장치를 찾지 못했습니다. 아래 표와 안내를 확인하세요.', 'warn');
       box.appendChild(el('p', 'warn', '목소리가 들어오는 장치가 없습니다. 마이크가 꽂혀 있는지, 음소거가 아닌지, '
