@@ -63,7 +63,8 @@ class Dialog:
         self.phrases = phrases
         self.gate = gate  # gate.Gate or None: code checks before any function call is sent
         self.rules = policy.load_rules(getattr(cfg, "rules_path", ""))  # hand-off signals, templates
-        self.guard = OutputGuard(getattr(cfg, "output_guard", "log"), phrases.get("unverified_fallback", ""))
+        self.guard = OutputGuard(getattr(cfg, "output_guard", "log"), phrases.get("unverified_fallback", ""),
+                                 strict=getattr(cfg, "output_guard_strict", ""), phrases=phrases, rules=self.rules)
         # One system message: static instructions first (same for every call, so the provider's
         # prompt cache can reuse it), per-call context (now, caller, history) at the end.
         # (A separate second system message was tried on 2026-11-19; the model then wrote its
@@ -91,9 +92,13 @@ class Dialog:
         """Everything the model was given or told this session (for the output check)."""
         return "\n".join(str(msg.get("content") or "") for msg in self.messages)
 
+    def _results(self) -> str:
+        """Function results of this session only (what was actually done / found)."""
+        return "\n".join(str(msg.get("content") or "") for msg in self.messages if msg["role"] == "tool")
+
     def _checked(self, sentence: str, m: dict, said: list[str]) -> str:
         """Output check; returns "" when the sentence must not be said (e.g. already said)."""
-        out, flag = self.guard.check(sentence, self._sources(), said)
+        out, flag = self.guard.check(sentence, self._sources(), said, self._results())
         if flag:
             m.setdefault("output_flags", []).append(flag)
             self._dbg("output_guard", sentence=sentence, flag=flag)

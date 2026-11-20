@@ -83,6 +83,10 @@ def test_order_lookup_turn_end_and_session_header(agent, two_mocks):
     assert r["first_agent_frame_idx"] > r["speech_frames"]  # no audio before speech ended
     calls = store.calls_for("SID-1")
     assert [(c["name"], c["arguments"], c["matched"]) for c in calls] == [("get_order_info", {"order_id": "DEMO1001"}, True)]
+    # the competition server's metrics file records what the gate and output check decided
+    row = _metrics(cfg)[-1]
+    assert row["gate"] == [{"name": "get_order_info", "allowed": True, "reason": None}]
+    assert row["output_flags"] == [] and row["blocked_reply"] is None
 
 
 def test_not_found_is_reported_truthfully(agent, two_mocks):

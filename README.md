@@ -194,9 +194,9 @@ team/
   devui/                  브라우저 테스트 화면 + 테스트 서버 (개발용, 대회 경로와 분리)
   mock/mock_api.py        모의 함수 서버
   scripts/                bench(반복 측정), check_audio(STT·TTS 단독), check_llm, llm_probe(LLM·관문),
-                          check_concurrency / check_external(운영 점검), sweep_endpoint(말 끝 실험), make_testset
+                          check_concurrency / check_external(운영 점검), sweep_endpoint(말 끝 실험), make_testset, make_callback_audio
   tests/                  pytest
-  data/                   practice_ko(연습 8문항), endpoint_ko(말 끝 실험 18개), gate_ko(관문 시험), holdout_ko(튜닝 안 하는 세트)
+  data/                   practice_ko(연습 8문항), endpoint_ko(말 끝 실험 18개), gate_ko(관문 시험), callback_ko(콜백 2턴째 2문항), holdout_ko(튜닝 안 하는 세트)
   docs/                   문서 (아래)
   runs/                   측정 결과
 ```
@@ -213,3 +213,4 @@ team/
 | [docs/ISSUES.md](team/docs/ISSUES.md), [docs/LLM_BACKLOG.md](team/docs/LLM_BACKLOG.md) | 문제 사례, LLM 보류 목록 |
 | [docs/LLM_GATE.md](team/docs/LLM_GATE.md), [docs/LATENCY.md](team/docs/LATENCY.md), [docs/ENDPOINTING.md](team/docs/ENDPOINTING.md), [docs/SPEAK.md](team/docs/SPEAK.md) | 기능별 설명 |
 | [docs/REPORT.md](team/docs/REPORT.md) | 통합 전 1차 측정 보고서 |
+| [docs/STARTER_V2_1121.md](team/docs/STARTER_V2_1121.md) | 스타터킷 v2 비교, 콜백 응답 실험(시간 약속·번호 되읽기)과 출력 검사 변경 |

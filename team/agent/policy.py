@@ -58,6 +58,7 @@ def function_rules_text(rules: dict | None) -> str:
         return ""
     labels = (rules or {}).get("arg_labels") or {}
     lines = ["[함수 실행 규칙 — 시스템이 코드로도 같은 기준을 검사함]"]
+    self_asked = False  # some write function still needs the model to word the read-back itself
     for name, sp in funcs.items():
         args = "·".join(labels.get(a, a) for a in sp.get("value_args") or [])
         if sp.get("kind") == "read":
@@ -65,7 +66,15 @@ def function_rules_text(rules: dict | None) -> str:
             lines.append(f"- {name} (조회): {how}")
             continue
         confirm = sp.get("confirm", "explicit")
-        if confirm == "explicit":
+        if confirm == "explicit" and sp.get("confirm_template"):
+            # the code reads the exact argument values back (dialog.plan_blocked_reply): the model
+            # never writes a phone / order number into a question (it garbled them, 2026-11-21)
+            what = f"{args} 확인 질문" if args else "확인 질문"
+            how = (f"고객이 원하면 {what}을 직접 말하지 말고, 동의 칸을 빈 문자열로 둔 채 말없이 바로 호출한다. "
+                   f"시스템이 정확한 값으로 확인 질문을 대신 한다. 고객이 그 질문에 이번 말에서 동의하면 "
+                   f"다시 호출하고 동의 표현을 동의 칸에 옮겨 적는다.")
+        elif confirm == "explicit":
+            self_asked = True
             how = (f"직전에 {_obj(args)} 복창해 진행 여부를 묻고, 고객이 이번 말에서 동의했을 때만 호출한다."
                    if args else "직전에 진행 여부를 묻고, 고객이 이번 말에서 동의했을 때만 호출한다.")
         elif confirm == "request":
@@ -76,8 +85,10 @@ def function_rules_text(rules: dict | None) -> str:
         lines.append(f"- {name} (접수·변경): {how}")
     default = {**{"kind": "write", "confirm": "explicit"}, **((rules or {}).get("_default") or {})}
     if default.get("kind") == "write":
+        self_asked = True
         lines.append("- 위에 없는 함수: 진행 여부를 묻고 고객이 동의했을 때만 호출한다.")
-    lines.append("- 동의를 받기 전에는 함수를 부르지 말고, 실행할 내용과 값을 복창해 확인 질문을 한다.")
+    if self_asked:
+        lines.append("- 그 밖의 접수·변경 함수는 동의를 받기 전에는 부르지 말고, 실행할 내용과 값을 복창해 확인 질문을 한다.")
     return "\n".join(lines)
 
 

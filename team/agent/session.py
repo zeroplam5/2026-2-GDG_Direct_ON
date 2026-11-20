@@ -438,6 +438,11 @@ class Session:
             "tts_ms": m.get("tts_ms"), "handoff_flags": m.get("handoff_flags"),
             "outcome": m.get("outcome"), "ignored_frames_while_responding": self.ignored_frames_while_responding,
             "providers": {"stt": self.app.stt.name, "llm": self.app.llm.name, "tts": self.app.tts.name},
+            # what the code checks decided (gate: name / allowed / reason only, no arguments);
+            # output-check values (the numbers / time words) only with log_text
+            "gate": m.get("gate"), "blocked_reply": m.get("blocked_reply"),
+            "output_flags": [f if self.cfg.log_text else {k: v for k, v in f.items() if k != "values"}
+                             for f in m.get("output_flags") or []],
         }
         if self.cfg.log_text:
             row["user_text"], row["reply_text"] = user_text, reply

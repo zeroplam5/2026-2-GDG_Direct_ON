@@ -1,5 +1,5 @@
 {
-  "_comment": "PRACTICE rules pack (not from the official manual). Every rule the CODE checks lives here; the prompt .md keeps only prose (tone, how to talk). On 2026-11-21 make an official pack (see README.md). Sections: functions/_default = pre-execution gate (team/agent/gate.py) and the auto-generated [함수 실행 규칙] prompt section; confirm_template (optional, per write function) = the question said directly when the gate blocks for missing consent, filled with the call's arguments; handoff = hand-off signal keywords (policy.handoff_flags, memo only); consent = consent / refusal word patterns used by the gate. Regex values are Python re syntax.",
+  "_comment": "PRACTICE rules pack (not from the official manual). Every rule the CODE checks lives here; the prompt .md keeps only prose (tone, how to talk). On 2026-11-21 make an official pack (see README.md). Sections: functions/_default = pre-execution gate (team/agent/gate.py) and the auto-generated [함수 실행 규칙] prompt section; confirm_template (optional, per write function) = the question said directly when the gate blocks for missing consent, filled with the call's arguments; handoff = hand-off signal keywords (policy.handoff_flags, memo only); consent = consent / refusal word patterns used by the gate; output_check = word patterns of the output check's unconfirmed-time rule. Regex values are Python re syntax.",
 
   "arg_labels": {"order_id": "주문번호", "phone_number": "전화번호"},
 
@@ -26,5 +26,13 @@
     "affirmative": "^\\s*(?:네|예|응|맞|그래|그럼|좋)|해\\s*주세요|해\\s*줘|해\\s*주시|부탁|진행|접수해|그렇게|그걸로|좋아요|좋습니다|맞아요|맞습니다",
     "puzzled": "^\\s*(?:네|예|뭐|뭐라고|네에)\\s*요?\\s*\\?\\s*$",
     "question": "\\?|까요|나요|가요|실래요|시겠어요|시겠습니까|맞으세요|맞습니까|맞나요|될까요|드릴까요"
+  },
+
+  "output_check": {
+    "_comment": "Output check 'time' (team/agent/output_guard.py): a non-question, non-negated sentence with a time word AND a contact/booking word is replaced unless some function result carries a time value (result_time).",
+    "time": "내일|모레|글피|오늘|오전|오후|아침|저녁|점심|요일|주말|다음\\s*주|\\d+\\s*시(?!간)|(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|열한|열두)\\s*시(?!간)",
+    "claim": "접수|예약|확정|잡아\\s*(?:두|드)|해\\s*두었|해\\s*뒀|연락\\s*드리|전화\\s*드리|연락\\s*드릴|전화\\s*드릴|연락드리|전화드리|연락드릴|전화드릴|콜백|전달|반영|등록|메모|기록|남겨\\s*(?:두|드)",
+    "negation": "않|못\\s*하|못\\s*했|없|불가|어렵|드릴\\s*수\\s*없",
+    "result_time": "\\d{1,2}:\\d{2}|\\d{4}-\\d{1,2}-\\d{1,2}|\\d+\\s*시|오전|오후|내일|모레|\\bAM\\b|\\bPM\\b|T\\d{2}:"
   }
 }

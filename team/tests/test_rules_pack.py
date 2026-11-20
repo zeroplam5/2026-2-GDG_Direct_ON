@@ -19,7 +19,12 @@ def test_prompt_section_is_generated_from_the_same_table_the_gate_uses():
     for name in PRACTICE["functions"]:
         assert name in text
     assert "get_order_info (조회): 주문번호가 대화에 나오면 바로 호출한다." in text
-    assert "request_callback (접수·변경): 직전에 전화번호를 복창해" in text
+    # request_callback has a confirm_template: the code reads the number back, not the model
+    assert "request_callback (접수·변경): 고객이 원하면 전화번호 확인 질문을 직접 말하지 말고" in text
+    assert "시스템이 정확한 값으로 확인 질문을 대신 한다" in text
+    no_tpl = json.loads(json.dumps(PRACTICE))
+    no_tpl["functions"]["request_callback"].pop("confirm_template")
+    assert "request_callback (접수·변경): 직전에 전화번호를 복창해" in policy.function_rules_text(no_tpl)
     prompt = policy.build_system_prompt("지침 {now}", {"now": "2026-11-21 11:00"}, {}, PRACTICE)
     assert prompt.index("지침") < prompt.index("[함수 실행 규칙")  # static part stays in front
 

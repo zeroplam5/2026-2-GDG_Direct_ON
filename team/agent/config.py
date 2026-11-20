@@ -115,6 +115,11 @@ class Config:
     # log = record numbers found nowhere in prompt / customer words / function results,
     # block = replace such a sentence with phrases["unverified_fallback"], off = skip
     output_guard: str = "log"
+    # checks that replace the sentence even in "log" mode (comma list, "" = log only):
+    # ids = phone / order numbers found nowhere -> phrases["unverified_id_fallback"]
+    # time = contact / booking promised for a time no function result carries
+    #        -> phrases["unconfirmed_time_fallback"]
+    output_guard_strict: str = "ids,time"
     # latency: say a short pre-synthesized phrase (phrases.json "tool_ack") while functions run,
     # only when the model asked for a function before saying anything in this turn
     tool_ack: bool = False                  # off by default: not decided by the team / official manual yet
