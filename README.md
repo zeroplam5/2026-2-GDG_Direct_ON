@@ -1,3 +1,19 @@
+> ## 팀원은 여기부터: [team/README.md](team/README.md)
+> 이 저장소의 **팀 음성 상담원**과 **실행 방법**은 [team/README.md](team/README.md)에 있습니다(`prototype` 브랜치).
+> 가장 빠른 실행 (Windows, 저장소 루트):
+> ```powershell
+> uv venv --python 3.12 .venv
+> uv pip install --python .venv/Scripts/python.exe -r team/requirements.txt
+> .venv/Scripts/python -m team.mock.mock_api --port 8100                                        # 터미널 A
+> .venv/Scripts/python -m team.devui.server --stt faster_whisper --llm scripted --tts tone      # 터미널 B
+> ```
+> → Chrome/Edge에서 **http://127.0.0.1:9100** → **마이크 자동 찾기** → **테스트 시작**.
+> 맥·리눅스 설치, 실제 AI 답변, 11/21 공식 모델, 자주 막히는 문제는 [team/README.md](team/README.md)를 보세요.
+>
+> 이 안내 블록 아래는 운영진이 준 **스타터킷 원본 README**이며 수정하지 않았습니다.
+
+---
+
 # DIRECT:ON 2026 — 사전 기술연습용 STARTER KIT
 
 > **사전 연습용 예제**입니다. 본 대회의 상담 데이터, 정식 매뉴얼, 연습 문항과 평가 문항은 **들어 있지 않습니다**.
