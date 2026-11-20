@@ -94,7 +94,7 @@
 ```bash
 # 자동 테스트 (키 없음)
 .venv/Scripts/python -m pytest team/tests -q
-node --test team/devui/tests/pcm.test.mjs
+node --test team/devui/tests/pcm.test.mjs team/devui/tests/score.test.mjs
 
 # 브라우저 테스트 (키 없이: 로컬 Whisper로 실제 인식 + 대체물 LLM·TTS)
 .venv/Scripts/python -m team.mock.mock_api --port 8100

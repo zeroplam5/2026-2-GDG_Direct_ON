@@ -152,7 +152,7 @@
 ```bash
 # 자동 테스트 (키 없음)
 .venv/Scripts/python -m pytest team/tests -q
-node --test team/devui/tests/pcm.test.mjs
+node --test team/devui/tests/pcm.test.mjs team/devui/tests/score.test.mjs
 
 # 모의 함수 서버 (모든 브라우저 테스트에 필요)
 .venv/Scripts/python -m team.mock.mock_api --port 8100

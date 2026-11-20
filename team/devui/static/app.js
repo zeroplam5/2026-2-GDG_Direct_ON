@@ -1,6 +1,9 @@
 // Voice test page: mic -> 16 kHz s16le mono 640-byte frames -> WebSocket; server PCM -> ordered playback.
 // Only states the server actually reports are shown as facts; browser-side estimates are labelled.
-import { StreamResampler, S16Decoder, FRAME_BYTES, FRAME_SAMPLES, TARGET_RATE } from './pcm.js';
+import { StreamResampler, S16Decoder, FRAME_BYTES, FRAME_SAMPLES, TARGET_RATE, rmsInt16LE } from './pcm.js';
+import {
+  SPEED_TABLE, SILENCE_RMS, RESPONSE_OPTIONS, FUNC_OPTIONS, caseSpeed, systemScore, averageScores, parseJudgment,
+} from './score.js';
 
 const $ = (id) => document.getElementById(id);
 const TAIL_TIMEOUT_MS = 25000;    // starter-kit evaluator gives up 25 s after the end of speech
@@ -164,6 +167,8 @@ function newTest() {
     firstFrameSentAt: null, firstVoice: null, lastVoice: null,
     agentTexts: [], userText: null, dbg: [], tools: [], mockCalls: null, metrics: null, eou: null,
     gate: [], blocked: [], guardFlags: [], toolAck: null, eouMode: null,
+    // practice score (browser clock): first voiced agent frame, last function result, mic voice times
+    firstVoicedRecvAt: null, lastToolEndAt: null, afterToolVoicedAt: null, toolSent: false, micVoiceAt: [],
     firstAudioRecvAt: null, firstPlayAt: null, turnEndAt: null, playbackDoneAt: null,
     audioBytesRecv: 0, audioChunks: 0, audioAfterTurnEnd: 0,
   };
@@ -287,6 +292,7 @@ function onWorklet(t, d) {
   t.maxBuffered = Math.max(t.maxBuffered, t.ws.bufferedAmount);
   if (d.rms >= Number($('vadThr').value || 300)) {
     if (t.firstVoice == null) t.firstVoice = now;
+    if (t.micVoiceAt.length < 6000) t.micVoiceAt.push(now);   // for the interruption estimate
     if (!t.eou && t.firstAudioRecvAt == null) t.lastVoice = now;   // browser estimate of the end of speech
   }
   if (t.replay.length < REPLAY_MAX_FRAMES) t.replay.push(d.frame);
@@ -320,6 +326,10 @@ function onAudio(t, ab) {
     renderTiming(t);
   }
   t.audioBytesRecv += ab.byteLength; t.audioChunks++;
+  if (rmsInt16LE(ab) >= SILENCE_RMS) {         // "voiced" as the starter-kit evaluator counts it
+    if (t.firstVoicedRecvAt == null) t.firstVoicedRecvAt = now;
+    if (t.lastToolEndAt != null && t.afterToolVoicedAt == null && now > t.lastToolEndAt) t.afterToolVoicedAt = now;
+  }
   if (t.turnEndAt) t.audioAfterTurnEnd++;
   try { t.player.push(ab); } catch (e) {
     setPlayback(t, 'error', e.message || String(e));
@@ -373,6 +383,7 @@ function onDebug(t, msg, at) {
     case 'debug.tool.end': {
       const c = t.tools.find((x) => x.name === msg.name && !x.end);
       if (c) { c.end = msg; c.endAt = at; } else t.tools.push({ name: msg.name, args: null, end: msg, endAt: at });
+      if (msg.sent) { t.toolSent = true; t.lastToolEndAt = at; t.afterToolVoicedAt = null; }  // last result wins
       renderTools(t);
       break;
     }
@@ -425,6 +436,7 @@ function onTurnEnd(t, at) {
   $('btnAddHistory').disabled = false;
   if (!t.debug) { renderTools(t); setUserText(t, '(호환 모드: 대회용 서버는 인식 결과를 보내지 않음 — 테스트 서버 /ws로 연결하면 보임)', '', ''); }
   addTranscript(t);
+  addScoreRecord(t, null);
   setStatus(t, 'server_done', t.player.queuedSec() > 0 ? '서버 전송 완료 · 브라우저가 남은 음성을 재생 중' : '서버 전송 완료');
   t.player.end();
   maybeFinish(t);
@@ -457,6 +469,7 @@ function onWsClose(t, e) {
 function fail(t, message) {
   if (t !== T) return;
   t.error = message;
+  if (t.everSent && !t.turnEndAt && !t.scored) addScoreRecord(t, '연결 실패·응답 없음');
   setStatus(t, 'error', message);
   logEvt(t, '!', message);
   if (t.player && !t.player.done) setPlayback(t, t.player.started ? 'stopped' : 'idle');
@@ -564,6 +577,104 @@ function renderTranscript() {
 function transcriptText() {
   return transcript.map((e) => `[${e.time} ${e.sid}]\n고객: ${e.user ?? '(인식 결과 없음)'}\n상담원: ${e.agent}`).join('\n\n');
 }
+
+// ── practice score (page memory only) ──
+const scores = [];
+function addScoreRecord(t, failReason) {
+  if (t.scored) return;
+  t.scored = true;
+  // reference point = end of the customer's speech. Debug mode: the server VAD's last voiced frame, moved to the
+  // browser clock through the debug.eou receipt (local link: transit ~0). Compatibility mode: browser estimate.
+  const e = t.eou && t.eou.msg;
+  const anchor = e && e.t_commit_ms != null && e.t_last_speech_ms != null
+    ? t.eou.at - (e.t_commit_ms - e.t_last_speech_ms) : t.lastVoice;
+  const firstSound = t.firstVoicedRecvAt != null && anchor != null ? (t.firstVoicedRecvAt - anchor) / 1000 : null;
+  const afterTool = t.toolSent && t.afterToolVoicedAt != null ? (t.afterToolVoicedAt - t.lastToolEndAt) / 1000 : null;
+  // interruption estimate: the mic still heard speech when the first agent sound arrived (before it is played,
+  // so the agent's own voice cannot be the cause), or the sound came before the reference point
+  const f = t.firstVoicedRecvAt;
+  const talking = f != null && t.micVoiceAt.some((x) => x > f - 200 && x < f + 100);
+  const zeroReason = failReason || (talking || (firstSound != null && firstSound < 0) ? '끼어듦 의심 (브라우저 추정)' : null);
+  const sent = t.tools.filter((c) => c.end && c.end.sent).map((c) => `${c.name} ${c.args ?? ''}`.trim());
+  const blocked = t.gate.flatMap((g) => (g.decisions || []).filter((d) => !d.allowed).map((d) => `${d.name} (관문 차단, 보내지 않음)`));
+  scores.push({
+    n: scores.length + 1, sid: t.sid, user: t.debug ? (t.userText ?? '') : null, compat: !t.debug,
+    firstSound, afterTool, toolCalled: t.toolSent, calls: sent, blocked,
+    ...caseSpeed({ firstSound, afterTool, toolCalled: t.toolSent, zeroReason }),
+    response: null, func: null,
+  });
+  renderScores();
+}
+
+const fmtS = (v) => (v == null ? '—' : `${v.toFixed(2)}초`);
+const fmtN = (v, d = 1) => (v == null ? '—' : (Number.isInteger(v) ? String(v) : v.toFixed(d)));
+
+function judgeSelect(rec, key, options) {
+  const sel = el('select');
+  sel.appendChild(new Option('판정 전', ''));
+  for (const [v, label] of options) sel.appendChild(new Option(label, String(v)));
+  sel.value = rec[key] == null ? '' : String(rec[key]);
+  sel.onchange = () => { rec[key] = parseJudgment(sel.value); renderScores(); };
+  return sel;
+}
+
+function renderScores() {
+  const tb = document.querySelector('#scoreTable tbody'), tf = document.querySelector('#scoreTable tfoot');
+  tb.textContent = ''; tf.textContent = '';
+  if (!scores.length) {
+    $('scoreNow').textContent = '테스트를 마치면 속도 점수가 자동으로 계산됩니다.';
+    $('scoreNow').className = 'score-now muted';
+    return;
+  }
+  for (const r of scores) {
+    const sys = systemScore(r);
+    const tr = document.createElement('tr');
+    tr.appendChild(el('td', 'num', String(r.n)));
+    const said = el('td', 'said', r.user == null ? '(호환 모드)' : (r.user || '(인식된 말 없음)'));
+    said.title = r.sid;
+    tr.appendChild(said);
+    tr.appendChild(el('td', 'num', r.firstSound == null ? '—' : `${fmtS(r.firstSound)} → ${r.first}`));
+    tr.appendChild(el('td', 'num', r.compat ? '알 수 없음' : (r.toolCalled ? `${fmtS(r.afterTool)} → ${r.after}` : '함수 없음')));
+    const sp = el('td', 'num' + (r.reason ? ' err' : ''), fmtN(r.speed));
+    if (r.reason) sp.appendChild(el('div', 'detail', r.reason));
+    tr.appendChild(sp);
+    const rc = el('td'); rc.appendChild(judgeSelect(r, 'response', RESPONSE_OPTIONS)); tr.appendChild(rc);
+    const fc = el('td'); fc.appendChild(judgeSelect(r, 'func', FUNC_OPTIONS));
+    fc.appendChild(el('div', 'detail', r.compat ? '호환 모드: 호출 정보 없음'
+      : [...r.calls, ...r.blocked].join(' · ') || '보낸 호출 없음 (호출하면 안 되는 문항이면 맞음)'));
+    tr.appendChild(fc);
+    tr.appendChild(el('td', 'num', sys.total == null ? `속도분 ${fmtN(sys.speedPart)} / 30` : fmtN(sys.total)));
+    tr.appendChild(el('td', 'num strong', sys.item20 == null ? '—' : fmtN(sys.item20, 2)));
+    tb.appendChild(tr);
+  }
+  const avg = averageScores(scores);
+  const fr = document.createElement('tr');
+  fr.appendChild(el('td', null, '평균'));
+  fr.appendChild(el('td', 'detail', `${avg.n}건 중 판정 완료 ${avg.judged}건`));
+  fr.appendChild(el('td')); fr.appendChild(el('td'));
+  fr.appendChild(el('td', 'num', fmtN(avg.speed)));
+  fr.appendChild(el('td')); fr.appendChild(el('td'));
+  fr.appendChild(el('td', 'num', fmtN(avg.total)));
+  fr.appendChild(el('td', 'num strong', avg.item20 == null ? '—' : `${fmtN(avg.item20, 2)} / 20`));
+  tf.appendChild(fr);
+
+  const last = scores.at(-1);
+  const parts = [`최근 테스트 #${last.n}: 첫 소리 ${fmtS(last.firstSound)} (${last.first}점)`];
+  if (last.toolCalled) parts.push(`조회 뒤 답 ${fmtS(last.afterTool)} (${last.after}점)`);
+  parts.push(`속도 점수 ${fmtN(last.speed)}${last.reason ? ` — ${last.reason}` : ''}`);
+  const ok = last.speed > 0;
+  parts.push(ok ? '득점 가능 구간 (6초 이하)' : '이 문항 속도 0점');
+  $('scoreNow').textContent = parts.join(' · ');
+  $('scoreNow').className = 'score-now ' + (ok ? 'ok' : 'err');
+}
+
+function renderSpeedTable() {
+  const tb = document.querySelector('#speedTable tbody');
+  const rowOf = (a, b) => { const tr = document.createElement('tr'); tr.append(el('td', null, a), el('td', 'num', String(b))); return tr; };
+  for (const [bound, pts] of SPEED_TABLE) tb.appendChild(rowOf(`${bound.toFixed(1)}초 이하`, pts));
+  tb.appendChild(rowOf(`${SPEED_TABLE.at(-1)[0].toFixed(1)}초 초과`, 0));
+}
+renderSpeedTable();
 
 // ── rendering ──
 function resetView(t) {
@@ -777,7 +888,7 @@ $('btnStop').onclick = stopTest;
 $('btnReplay').onclick = replay;
 $('btnAddHistory').onclick = addHistory;
 $('btnClearHistory').onclick = () => { $('history').value = '[]'; };
-$('btnClearTranscript').onclick = () => { transcript.length = 0; renderTranscript(); };
+$('btnClearTranscript').onclick = () => { transcript.length = 0; renderTranscript(); scores.length = 0; renderScores(); };
 $('btnCopyTranscript').onclick = async () => {
   try { await navigator.clipboard.writeText(transcriptText()); $('statusDetail').textContent = '대화 기록을 클립보드에 복사했습니다.'; }
   catch { $('statusDetail').textContent = '클립보드 복사가 막혀 있습니다. 브라우저 권한을 확인하세요.'; }

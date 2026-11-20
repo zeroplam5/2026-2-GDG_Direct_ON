@@ -46,6 +46,7 @@ FILES = {
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/pcm.js": ("pcm.js", "text/javascript; charset=utf-8"),
+    "/score.js": ("score.js", "text/javascript; charset=utf-8"),
     "/capture-worklet.js": ("capture-worklet.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }

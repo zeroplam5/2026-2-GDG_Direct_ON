@@ -82,3 +82,18 @@ td.num { font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
 .tool .err { color: var(--err-t); }
 #log { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
 @media (max-width: 420px) { .grid2 { grid-template-columns: 1fr; } main { padding: 0 8px 16px; } }
+/* practice score card */
+.score-now { font-weight: 600; padding: 8px 10px; border-radius: 8px; margin: 0 0 10px; }
+.score-now.ok { background: var(--ok); color: var(--ok-t); }
+.score-now.err { background: var(--err); color: var(--err-t); }
+.score-now.muted { background: var(--idle); color: var(--idle-t); font-weight: 500; }
+#scoreTable td.said { max-width: 260px; overflow-wrap: anywhere; }
+#scoreTable td.err { color: var(--err-t); }
+#scoreTable td.strong, #scoreTable tfoot td.strong { font-weight: 700; }
+#scoreTable tfoot td { border-top: 2px solid var(--line); font-weight: 600; }
+#scoreTable select { font: inherit; padding: 3px 4px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--card); color: var(--text); }
+#scoreTable .detail { margin: 2px 0 0; overflow-wrap: anywhere; }
+.criteria table.compact { margin: 6px 0 10px; }
+.criteria ul { padding-left: 18px; }
+h2 small { font-size: 12px; font-weight: 500; }

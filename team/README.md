@@ -72,7 +72,7 @@ AGENT_LLM_MODEL=gpt-5.4-mini
 ```bash
 # 1) 자동 테스트: 키와 네트워크 없이 프로토콜, 모의 서버, 동시성, 오류 처리 확인 (약 50초, 98개 · 그중 3개는 알려진 한계를 표시하는 xfail)
 .venv/Scripts/python -m pytest team/tests -q
-node --test team/devui/tests/pcm.test.mjs   # 브라우저 음성 변환 (12개)
+node --test team/devui/tests/pcm.test.mjs team/devui/tests/score.test.mjs   # 브라우저 음성 변환 12개 + 연습 점수 계산 8개
 
 # 2) LLM 키 사전 점검: 키 존재 여부, 모델 목록, 함수 호출 1회 (키 값은 출력하지 않음)
 .venv/Scripts/python -m team.scripts.check_llm --list
