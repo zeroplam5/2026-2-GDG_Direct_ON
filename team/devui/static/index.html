@@ -116,6 +116,13 @@
       <label>now <input id="now" class="mono" spellcheck="false"></label>
       <label>브라우저 발화 판정 레벨 (int16 RMS) <input id="vadThr" type="number" min="0" step="50" value="300"></label>
     </div>
+    <label>마이크 장치
+      <select id="micDevice"><option value="">시스템 기본 장치</option></select></label>
+    <div class="row">
+      <button id="btnMicCheck" title="서버에 연결하지 않고 4초 동안 마이크 레벨만 확인합니다">마이크 점검 (4초)</button>
+      <button id="btnMicRefresh">장치 목록 새로고침</button>
+    </div>
+    <p id="micCheck" class="detail">테스트 전에 점검을 누르고 안내대로 1.5초 조용히 있다가 말해 보세요. 장치 이름은 마이크 권한을 허용한 뒤에 보입니다.</p>
     <fieldset>
       <legend>마이크 처리 (브라우저)</legend>
       <label class="inline"><input type="checkbox" id="ec" checked> 에코 제거</label>

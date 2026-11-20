@@ -19,7 +19,7 @@ let replayFrames = null; // frames sent in the last test (memory only)
 let replayCtx = null;
 
 // ── settings (only non-sensitive values are remembered; history/caller are not stored) ──
-const PERSIST = ['mode', 'wsUrl', 'toolsUrl', 'vadThr', 'ec', 'ns', 'agc', 'useHistory'];
+const PERSIST = ['mode', 'wsUrl', 'toolsUrl', 'vadThr', 'ec', 'ns', 'agc', 'useHistory', 'micDevice'];
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem('devui.settings') || '{}');
@@ -178,7 +178,8 @@ function micErrorText(e) {
   switch (e && e.name) {
     case 'NotAllowedError': case 'SecurityError':
       return '마이크 권한이 거부되었습니다. 주소창의 사이트 설정에서 마이크를 허용한 뒤 다시 시작하세요.';
-    case 'NotFoundError': case 'OverconstrainedError': return '사용할 수 있는 마이크 장치가 없습니다.';
+    case 'NotFoundError': case 'OverconstrainedError':
+      return '사용할 수 있는 마이크 장치가 없습니다. 선택한 장치가 빠졌다면 설정에서 "시스템 기본 장치"나 다른 마이크를 고르세요.';
     case 'NotReadableError': case 'AbortError': return '마이크를 열 수 없습니다 (다른 프로그램이 사용 중일 수 있음).';
     default: return `마이크 오류: ${e && e.name ? e.name + ': ' : ''}${e && e.message ? e.message : e}`;
   }
@@ -207,10 +208,9 @@ async function startTest() {
     return fail(t, '이 주소에서는 마이크를 쓸 수 없습니다. http://127.0.0.1:9100 또는 http://localhost:9100(또는 HTTPS)으로 여세요.');
   }
   try {
-    t.stream = await navigator.mediaDevices.getUserMedia({ audio: {
-      channelCount: { ideal: 1 }, echoCancellation: $('ec').checked,
-      noiseSuppression: $('ns').checked, autoGainControl: $('agc').checked } });
+    t.stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
   } catch (e) { return fail(t, micErrorText(e)); }
+  refreshDevices();                             // labels become visible once permission is granted
   if (t !== T || t.finalized) { t.stream.getTracks().forEach((x) => x.stop()); return; }
 
   try {
@@ -835,6 +835,7 @@ function renderAudioInfo(t) {
   const s = t.trackSettings || {};
   const elapsed = t.firstFrameSentAt != null ? ((t.turnEndAt || (t.finalized ? t.endAt : null) || performance.now()) - t.firstFrameSentAt) / 1000 : 0;
   const sentSec = t.framesSent * FRAME_SAMPLES / TARGET_RATE;
+  add('사용 중인 마이크', t.track ? `${t.track.label || '(이름 없음)'}${t.track.muted ? ' · 음소거 상태' : ''}` : '-');
   add('입력 장치 (브라우저 보고)', s.deviceId ? `${s.sampleRate ? s.sampleRate + ' Hz' : '샘플레이트 미보고'} · ${s.channelCount ? s.channelCount + 'ch' : '채널 미보고'} · 에코제거 ${s.echoCancellation} · 잡음억제 ${s.noiseSuppression} · 자동음량 ${s.autoGainControl}` : '-');
   add('변환 전 (실측)', t.contextRate ? `${t.contextRate} Hz · ${t.inChannels || '?'}ch → 16000 Hz mono` : '-');
   add('전송 형식', `pcm_s16le · 16000 Hz · mono · ${FRAME_BYTES} B / 20 ms`);
@@ -882,6 +883,103 @@ async function replay() {
     src.onended = () => { ctx.close().catch(() => {}); if (replayCtx === ctx) replayCtx = null; };
   } catch (e) { $('statusDetail').textContent = `다시 듣기 실패: ${e.message || e}`; }
 }
+
+// ── microphone device choice and a level check that does not touch the server ──
+function micConstraints() {
+  const id = $('micDevice').value;
+  return {
+    ...(id ? { deviceId: { exact: id } } : {}),
+    channelCount: { ideal: 1 }, echoCancellation: $('ec').checked,
+    noiseSuppression: $('ns').checked, autoGainControl: $('agc').checked,
+  };
+}
+
+function savedMicId() {
+  try { return JSON.parse(localStorage.getItem('devui.settings') || '{}').micDevice || ''; } catch { return ''; }
+}
+
+async function refreshDevices() {
+  const sel = $('micDevice');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  let devs = [];
+  try { devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput'); } catch { return; }
+  const keep = sel.value || savedMicId();
+  sel.textContent = '';
+  sel.appendChild(new Option('시스템 기본 장치', ''));
+  devs.forEach((d, i) => {
+    if (d.deviceId === 'default' || d.deviceId === 'communications') return;   // aliases of real devices
+    sel.appendChild(new Option(d.label || `마이크 ${i + 1} (이름은 권한 허용 후 표시)`, d.deviceId));
+  });
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  if (!devs.length) $('micCheck').textContent = '브라우저가 찾은 마이크가 없습니다. 장치 연결과 Windows 개인정보(마이크) 설정을 확인하세요.';
+}
+
+let micChecking = false;
+async function micCheck() {
+  if (micChecking) return;
+  if (T && !T.finalized) { $('micCheck').textContent = '테스트 중에는 점검할 수 없습니다. 테스트를 끝낸 뒤 누르세요.'; return; }
+  micChecking = true;
+  const out = $('micCheck');
+  const btn = $('btnMicCheck');
+  btn.disabled = true;
+  let stream = null, ctx = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+    const track = stream.getAudioTracks()[0];
+    const st = track.getSettings ? track.getSettings() : {};
+    await refreshDevices();
+    ctx = new AudioContext();
+    await ctx.resume();
+    const an = ctx.createAnalyser();
+    an.fftSize = 2048;
+    ctx.createMediaStreamSource(stream).connect(an);      // analysed only, never played
+    const buf = new Float32Array(an.fftSize);
+    const level = () => {
+      an.getFloatTimeDomainData(buf);
+      let s = 0;
+      for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+      return Math.sqrt(s / buf.length) * 32768;            // int16 RMS units, like the level meter
+    };
+    const listen = async (ms, label) => {
+      const xs = [];
+      const t0 = performance.now();
+      while (performance.now() - t0 < ms) {
+        await new Promise((r) => setTimeout(r, 50));
+        const v = level();
+        xs.push(v);
+        out.textContent = `"${track.label || '이름 없음'}" · ${label} · 현재 레벨 ${Math.round(v)}`;
+      }
+      xs.sort((a, b) => a - b);
+      return { median: xs[Math.floor(xs.length / 2)] || 0, peak: xs.at(-1) || 0 };
+    };
+    const quiet = await listen(1500, '1단계: 1.5초 동안 조용히 있어 주세요');
+    const voice = await listen(2500, '2단계: 지금 "주문번호 데모 일공공일" 하고 말해 보세요');
+    const thr = Number($('vadThr').value || 300);
+    let verdict, ok = false;
+    if (track.muted) verdict = '장치가 음소거 상태입니다. 장치나 Windows 소리 설정의 음소거를 확인하세요.';
+    else if (voice.peak < 30) verdict = '소리가 거의 들어오지 않습니다. 연결이 안 된 장치이거나 음소거입니다. 다른 마이크를 선택하세요.';
+    else if (voice.peak < quiet.median * 2) verdict = '말할 때와 조용할 때 레벨 차이가 거의 없습니다. 잡음만 들어오고 있어 이 장치는 실제 마이크가 아닐 가능성이 큽니다. 다른 마이크를 선택하세요.';
+    else if (voice.peak < thr) verdict = `목소리는 들어오지만 작습니다 (기준 ${thr} 미만). 마이크에 가까이 말하거나 Windows 입력 음량을 올리세요.`;
+    else { verdict = '정상: 목소리가 잡음과 구분됩니다. 이 장치로 테스트하세요.'; ok = true; }
+    out.textContent = `장치 "${track.label || '이름 없음'}"${st.sampleRate ? ` · ${st.sampleRate} Hz` : ''} · 조용할 때 ${Math.round(quiet.median)}`
+      + ` · 말할 때 최대 ${Math.round(voice.peak)} → ${verdict}`;
+    out.className = ok ? 'detail' : 'warn';
+  } catch (e) {
+    out.textContent = micErrorText(e);
+    out.className = 'warn';
+  } finally {
+    if (stream) stream.getTracks().forEach((x) => x.stop());
+    if (ctx) ctx.close().catch(() => {});
+    btn.disabled = false;
+    micChecking = false;
+  }
+}
+
+$('btnMicCheck').onclick = micCheck;
+$('btnMicRefresh').onclick = refreshDevices;
+$('micDevice').onchange = saveSettings;
+if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) navigator.mediaDevices.ondevicechange = refreshDevices;
+refreshDevices();
 
 $('btnStart').onclick = () => { startTest().catch((e) => T && fail(T, `예상하지 못한 오류: ${e.message || e}`)); };
 $('btnStop').onclick = stopTest;
