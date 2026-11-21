@@ -901,61 +901,11 @@ function demoMetric(label, sec, pts, reason, max, ticks) {
 // Demo situations: 자유 (empty call) or a short preset conversation in the official history shape,
 // the same shape as an official case (history + the next customer line). Team-made values that match team/data/demo (DEMO1001 배송중, DEMO2002
 // 배송완료, 상담원 전화 요청) - never official contest records. Edit here to fit the data the mock server runs with.
-let DEMO_SCENARIOS = [
-  { name: '자유', history: [] },
-  {
-    name: '이어서 묻기',
-    history: [
-      { role: 'customer', text: '주문번호 데모 이공공이 배송 어디쯤이에요?' },
-      { role: 'tool_call', name: 'get_order_info', arguments: { order_id: 'DEMO2002' } },
-      { role: 'tool_result', name: 'get_order_info', result: { status: 'ok', data: { order_id: 'DEMO2002', shipping_status: '배송완료' } } },
-      { role: 'agent', text: 'DEMO2002 주문은 배송 완료로 나옵니다.' },
-    ],
-  },
-  {
-    name: '확인 뒤 접수',
-    history: [
-      { role: 'customer', text: '상담원 통화 원해요. 홍길동, 공일공 공공공공 일이삼사요.' },
-      { role: 'agent', text: '홍길동 님, 010-0000-1234로 상담원 전화 요청 접수할까요?' },
-    ],
-  },
-  {
-    name: '번호 정정',
-    history: [
-      { role: 'customer', text: '주문번호 데모 일공공일 배송 확인해 주세요.' },
-      { role: 'agent', text: 'DEMO1001 주문 맞으세요?' },
-    ],
-  },
-  {
-    name: '취소 요청',
-    history: [
-      { role: 'customer', text: '주문번호 20990101-0000001 취소하고 싶어요.' },   // 15 digits: the official rules check the order-number format
-      { role: 'agent', text: '취소 사유를 알려 주시겠어요?' },
-    ],
-  },
-  {
-    name: '몸이 불편해요',
-    history: [
-      { role: 'customer', text: '어제부터 관절 영양제 먹고 있는데요.' },
-      { role: 'agent', text: '네, 말씀하세요.' },
-    ],
-  },
-];
+// The demo uses the free tab only (team decision 11/21): no preset conversation, works with any mock data.
+// Add entries here ({ name, history: [official history entries] }) to bring preset tabs back; with one
+// entry the tab row is hidden.
+let DEMO_SCENARIOS = [{ name: '자유', history: [] }];
 let demoScenario = 0;
-// When the kit data is on this computer, team/scripts/make_demo_scenarios.py writes tabs from the official
-// practice cases (data/demo_scenarios.json, never committed) and the devui server serves them: use those,
-// keeping 자유 first. Without the file the made-up tabs above stay.
-async function loadOfficialScenarios() {
-  try {
-    const r = await fetch('scenarios.json', { cache: 'no-store' });
-    if (!r.ok) return;
-    const list = await r.json();
-    if (!Array.isArray(list) || !list.length) return;
-    DEMO_SCENARIOS = [DEMO_SCENARIOS[0], ...list.map((x) => ({ name: x.name, history: x.history || [], caller: x.caller ?? null, say: x.say || '' }))];
-    demoScenario = 0;
-    demoNewCall();
-  } catch { /* keep the built-in tabs */ }
-}
 function demoUseScenario(i) {
   if (T && !T.finalized) return;
   demoScenario = i;
@@ -964,6 +914,7 @@ function demoUseScenario(i) {
 function renderScenarioTabs() {
   const box = $('demoScenarios');
   box.textContent = '';
+  box.parentElement.hidden = DEMO_SCENARIOS.length < 2;   // one tab: no tab row
   const busy = !!T && !T.finalized;
   DEMO_SCENARIOS.forEach((s, i) => {
     const b = el('button', 'd-scn-tab', s.name);
@@ -1422,7 +1373,7 @@ refreshDevices().then(() => {
 $('btnStart').onclick = () => { startTest().catch((e) => T && fail(T, `예상하지 못한 오류: ${e.message || e}`)); };
 $('demoBtn').onclick = () => { if (T && !T.finalized) stopTest(); else $('btnStart').onclick(); };
 $('demoNew').onclick = demoNewCall;
-if (DEMO) { $('history').value = JSON.stringify(DEMO_SCENARIOS[0].history); $('useHistory').checked = true; loadOfficialScenarios(); }
+if (DEMO) { $('history').value = JSON.stringify(DEMO_SCENARIOS[0].history); $('useHistory').checked = true; }
 if (DEMO) { document.body.classList.add('demo'); document.title = 'AI 전화 상담원 · 시연'; renderDemo(); }
 $('btnStop').onclick = stopTest;
 $('btnReplay').onclick = replay;
