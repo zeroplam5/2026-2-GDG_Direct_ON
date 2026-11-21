@@ -62,10 +62,23 @@ def function_rules_text(rules: dict | None) -> str:
     for name, sp in funcs.items():
         args = "·".join(labels.get(a, a) for a in sp.get("value_args") or [])
         if sp.get("kind") == "read":
-            how = f"{args}가 대화에 나오면 바로 호출한다." if args else "필요할 때 바로 호출한다."
+            if sp.get("require_any"):
+                need = " 또는 ".join(labels.get(a, a) for a in sp["require_any"])
+                how = (f"{need}가 이번 말·이전 대화·발신자 정보에 있으면 바로 호출한다. "
+                       f"없으면 먼저 물어본다.")
+            else:
+                how = f"{args}가 대화에 나오면 바로 호출한다." if args else "필요할 때 바로 호출한다."
             lines.append(f"- {name} (조회): {how}")
             continue
         confirm = sp.get("confirm", "explicit")
+        if confirm == "context":
+            need = f"필요한 값({args})" if args else "필요한 정보"
+            how = (f"고객이 이 처리를 원하고 {need}이 이번 말·이전 대화·발신자 정보·이전 조회 결과에 있으면 "
+                   f"따로 되묻지 말고 바로 호출한다. 값이 없으면 먼저 물어본다. 이번 말에 처음 조회한 결과의 "
+                   f"번호로는 바로 접수하지 않고, 결과를 안내한 뒤 어느 건을 진행할지 확인한다. "
+                   f"호출해 ok를 받기 전에는 접수했다고 말하지 않는다.")
+            lines.append(f"- {name} (접수·변경): {how}")
+            continue
         if confirm == "explicit" and sp.get("confirm_template"):
             # the code reads the exact argument values back (dialog.plan_blocked_reply): the model
             # never writes a phone / order number into a question (it garbled them, 2026-11-21)
@@ -84,7 +97,9 @@ def function_rules_text(rules: dict | None) -> str:
             how = "고객 의사가 분명할 때 호출한다."
         lines.append(f"- {name} (접수·변경): {how}")
     default = {**{"kind": "write", "confirm": "explicit"}, **((rules or {}).get("_default") or {})}
-    if default.get("kind") == "write":
+    if default.get("kind") == "write" and default.get("confirm") == "context":
+        lines.append("- 위에 없는 함수: 고객이 원하고 필요한 값이 대화에 있을 때만 호출한다.")
+    elif default.get("kind") == "write":
         self_asked = True
         lines.append("- 위에 없는 함수: 진행 여부를 묻고 고객이 동의했을 때만 호출한다.")
     if self_asked:
@@ -103,34 +118,104 @@ def load_phrases(path: str) -> dict:
 
 _ROLE = {"user": "customer", "customer": "customer", "고객": "customer",
          "assistant": "agent", "agent": "agent", "상담원": "agent"}
+_WHO = {"customer": "고객", "agent": "상담원", "tool_call": "(함수 호출)", "tool_result": "(함수 결과)"}
+
+# The official history is a real chat log: agent turns carry links and emoji that make no sense
+# on the phone (SPEC.md / DATA.md, 2026-11-21).
+_LINK = re.compile(r"<link>.*?</link>|https?://\S+", re.S)
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿■-◿️‍]")
+# No length limit on the history (2026-11-21 decision: nothing is cut for now). The longest
+# practice history is about 5,000 characters after cleaning. Revisit if very long histories
+# turn out to slow the first answer.
+
+
+def clean_text(text, keep_lines: bool = False) -> str:
+    """Links and emoji removed (a link becomes "(링크)"), whitespace collapsed."""
+    s = _EMOJI.sub("", _LINK.sub("(링크)", str(text or "")))
+    if keep_lines:
+        return "\n".join(re.sub(r"[ \t]+", " ", ln).strip() for ln in s.splitlines() if ln.strip())
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def normalize_history(history) -> list[tuple[str, str]]:
-    """THE single place that knows the history shape. The starter kit only shows history=[]
-    and the official schema is published on 2026-11-21: adapt this function then.
-    Returns [(role, text)] with role "customer" | "agent" | other label, or [] when the
-    shape is unknown (callers then fall back to the raw JSON)."""
-    if not isinstance(history, list) or not all(isinstance(h, dict) for h in history):
+    """THE single place that knows the history shape. Official shape (day kit SPEC.md):
+        {"role": "customer" | "agent", "text": "..."}
+        {"role": "tool_call",   "name": "...", "arguments": {...}}
+        {"role": "tool_result", "name": "...", "result": {...}}
+    Returns [(role, text)] with role customer | agent | tool_call | tool_result. Function entries
+    become "<name> <json>" in full. Customer / agent text is cleaned (links, emoji), never cut.
+    An entry of an unknown shape is skipped, never the whole history."""
+    if not isinstance(history, list):
         return []
     out = []
     for h in history:
-        role = h.get("role") or h.get("speaker") or "?"
+        if not isinstance(h, dict):
+            continue
+        role = str(h.get("role") or h.get("speaker") or "").lower()
+        if role in ("tool_call", "tool_result"):
+            body = h.get("arguments") if role == "tool_call" else h.get("result")
+            out.append((role, f"{h.get('name') or '?'} {json.dumps(body, ensure_ascii=False)}"))
+            continue
         text = h.get("text") or h.get("content") or h.get("utterance")
         if text is None:
-            return []
-        out.append((_ROLE.get(str(role).lower(), str(role)), str(text)))
+            continue
+        out.append((_ROLE.get(role, role or "?"), clean_text(text)))
     return out
 
 
 def format_history(history) -> str:
-    """Known shapes are rendered as "고객: …" / "상담원: …" lines, anything else as JSON."""
+    """One line per entry: "고객: …", "상담원: …", "(함수 호출) name {...}", "(함수 결과) name {...}"
+    (the same shape the official grader shows its judge). The whole history, nothing cut."""
     if not history:
         return ""
     turns = normalize_history(history)
-    who = {"customer": "고객", "agent": "상담원"}
-    lines = [f"{who.get(r, r)}: {t}" for r, t in turns]
-    s = "\n".join(lines) if lines else json.dumps(history, ensure_ascii=False)
-    return s[-3000:]
+    if not turns:
+        return json.dumps(history, ensure_ascii=False)
+    return "\n".join(f"{_WHO[r]} {t}" if r in ("tool_call", "tool_result") else f"{_WHO.get(r, r)}: {t}"
+                     for r, t in turns)
+
+
+# ── official brand material (day kit data/brand/, never committed: DATA.md forbids publishing) ──
+def load_brand(brand_dir) -> dict:
+    """scenarios.md / information.json / style.json from the kit's data/brand folder.
+    {} when the folder is missing (practice and the tests run without it)."""
+    d = Path(brand_dir) if brand_dir else None
+    if not d or not d.is_dir():
+        return {}
+    out = {}
+    if (d / "scenarios.md").is_file():
+        out["scenarios"] = (d / "scenarios.md").read_text(encoding="utf-8")
+    for key, name in (("information", "information.json"), ("style", "style.json")):
+        if (d / name).is_file():
+            out[key] = json.loads((d / name).read_text(encoding="utf-8"))
+    return out
+
+
+def brand_text(brand: dict | None) -> str:
+    """Prompt sections made from the brand material. Static per brand, so it stays in the cached
+    prefix of the system message."""
+    brand = brand or {}
+    parts = []
+    if brand.get("scenarios"):
+        parts.append("[상담 시나리오]\n" + clean_text(brand["scenarios"], keep_lines=True))
+    info = brand.get("information")
+    if isinstance(info, list) and info:
+        items = [f"■ {clean_text(i.get('tag'))}\n{clean_text(i.get('content'), keep_lines=True)}"
+                 for i in info if isinstance(i, dict)]
+        parts.append("[브랜드 정보 — 정책·사실은 여기와 함수 결과에 있는 것만 말한다]\n" + "\n".join(items))
+    style = brand.get("style")
+    if isinstance(style, dict) and (style.get("style") or style.get("greeting")):
+        lines = [clean_text(style.get("style"), keep_lines=True)] if style.get("style") else []
+        if style.get("greeting"):
+            lines.append("첫 인사: " + clean_text(style["greeting"]))
+        parts.append("[말투 규칙]\n" + "\n".join(lines))
+    return "\n\n".join(parts)
+
+
+def compose_prompt(template: str, brand: dict | None) -> str:
+    """Our instructions (pack prompt) followed by the brand material."""
+    extra = brand_text(brand)
+    return template + ("\n\n" + extra if extra else "")
 
 
 def build_static_prompt(template: str, phrases: dict, rules: dict | None = None, now=None) -> str:
@@ -153,10 +238,10 @@ def build_context(start: dict) -> str:
     caller = start.get("caller")
     if caller:
         parts.append("[발신자 정보 — 시스템 제공 참고 자료, 본인 확인 완료를 뜻하지 않음]\n"
-                     + json.dumps(caller, ensure_ascii=False)[:1000])
+                     + json.dumps(caller, ensure_ascii=False))
     hist = format_history(start.get("history"))
     if hist:
-        parts.append("[이전 상담 이력 — 참고 자료]\n" + hist)
+        parts.append("[이전 대화 — 이번 고객 말 직전까지. 실제 상담 기록이며 함수 호출·결과를 포함]\n" + hist)
     return "\n\n".join(parts)
 
 
@@ -171,4 +256,5 @@ def user_message(text: str, flags: list[str], rules: dict | None = None) -> str:
         return text
     labels = {k: label for k, (_, label) in _handoff_table(rules).items()}
     note = ", ".join(labels.get(f, f) for f in flags)
-    return f"{text}\n\n[시스템 메모: 인계 후보 신호 감지 — {note}. 연결·접수가 완료됐다고 말하지 말 것.]"
+    tail = (rules or {}).get("handoff_note") or "연결·접수가 완료됐다고 말하지 말 것."
+    return f"{text}\n\n[시스템 메모: 인계 후보 신호 감지 — {note}. {tail}]"

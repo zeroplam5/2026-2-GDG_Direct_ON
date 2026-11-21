@@ -19,7 +19,7 @@ import httpx
 import websockets
 
 from . import policy
-from .config import Config
+from .config import Config, repo_path
 from .envfile import load_env_file
 from .providers import make_llm, make_stt, make_tts
 from .session import Session
@@ -31,7 +31,14 @@ log = logging.getLogger("agent")
 class App:
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.prompt_template = policy.load_prompt(cfg.prompt_path)
+        # official brand material (kit data/brand) goes right after our instructions
+        self.brand = policy.load_brand(repo_path(cfg.brand_dir))
+        if self.brand:
+            log.info("brand material from %s: scenarios=%s information=%d style=%s", cfg.brand_dir,
+                     "scenarios" in self.brand, len(self.brand.get("information") or []), "style" in self.brand)
+        else:
+            log.warning("no brand material at %s (set AGENT_BRAND_DIR to the kit's data/brand)", cfg.brand_dir)
+        self.prompt_template = policy.compose_prompt(policy.load_prompt(cfg.prompt_path), self.brand)
         self.phrases = policy.load_phrases(cfg.phrases_path)
         self.rules = policy.load_rules(cfg.rules_path)  # the one rules file (gate, hand-off, prompt section)
         t = time.perf_counter()

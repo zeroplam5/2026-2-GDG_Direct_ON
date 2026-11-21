@@ -13,6 +13,19 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 TEAM_ROOT = HERE.parent
 REPO_ROOT = TEAM_ROOT.parent
+# Brand-specific files ("packs"). official = 2026-11-21 day kit (default), practice = before that
+# (tests about the practice rules use it explicitly, see practice_config()).
+OFFICIAL_PACK = HERE / "packs" / "official"
+PRACTICE_PACK = HERE / "prompts"
+PRACTICE_PATHS = {"prompt_path": str(PRACTICE_PACK / "practice_system_prompt.md"),
+                  "rules_path": str(PRACTICE_PACK / "practice_rules.json"),
+                  "phrases_path": str(PRACTICE_PACK / "practice_phrases.json")}
+
+
+def repo_path(p) -> Path:
+    """A relative path is taken from the repository root (works from any working directory)."""
+    p = Path(p)
+    return p if p.is_absolute() else REPO_ROOT / p
 
 
 @dataclass
@@ -70,7 +83,7 @@ class Config:
 
     llm_provider: str = "openai_compat"    # openai_compat | scripted (test double, NOT an AI)
     llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4.1"             # 11/21 official: gpt-5.4-mini (earlier practice: gpt-4.1 | gpt-5 | gpt-4o-mini)
+    llm_model: str = "gpt-5.4-mini"        # 11/21 official LLM (earlier practice: gpt-4.1 | gpt-5 | gpt-4o-mini)
     llm_api_key_env: str = "OPENAI_API_KEY"
     llm_temperature: float = 0.2           # ignored for reasoning models (gpt-5*, o*)
     llm_max_tokens: int = 300              # reasoning models get max(this, 1024): budget includes reasoning
@@ -99,15 +112,20 @@ class Config:
     scripted_delay_ms: int = 50
 
     # ── dialog / tools ─────────────────────────────────────────────────────
-    prompt_path: str = str(HERE / "prompts" / "practice_system_prompt.md")
-    phrases_path: str = str(HERE / "prompts" / "practice_phrases.json")
+    # official pack (team/agent/packs/official) by default; practice pack: team/agent/prompts
+    prompt_path: str = str(OFFICIAL_PACK / "prompt.md")
+    phrases_path: str = str(OFFICIAL_PACK / "phrases.json")
     tool_timeout_s: float = 8.0
     max_tool_rounds: int = 4
     # every rule the code checks (gate, hand-off signals, consent words) lives in this one file
-    rules_path: str = str(HERE / "prompts" / "practice_rules.json")
+    rules_path: str = str(OFFICIAL_PACK / "rules.json")
     # a pack folder with pack.json sets prompt_path / rules_path / phrases_path at once
     # (practice pack: team/agent/prompts). Individually set AGENT_*_PATH values still win.
     pack_dir: str = ""
+    # official brand material (day kit data/brand: scenarios.md, information.json, style.json),
+    # appended to the prompt at startup. Not in git (the kit data must not be published).
+    # Relative = from the repository root. Missing folder = prompt without brand material (warning).
+    brand_dir: str = "data/brand"
     # pre-execution gate (team/agent/gate.py): code checks format, grounding and customer consent
     # before a function call is sent
     tool_gate: bool = True
@@ -174,6 +192,11 @@ class Config:
     def public_dict(self) -> dict:
         """Config for logs. Contains env-var *names*, never key values."""
         return {f.name: getattr(self, f.name) for f in fields(self) if f.name != "extra"}
+
+
+def practice_config(**kw) -> Config:
+    """Config on the practice pack (rules / prompt / phrases from before 2026-11-21)."""
+    return Config(**{**PRACTICE_PATHS, **kw})
 
 
 def _coerce(raw: str, default):

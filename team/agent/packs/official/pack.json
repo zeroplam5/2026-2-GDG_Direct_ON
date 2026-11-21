@@ -1,0 +1,7 @@
+{
+  "_comment": "OFFICIAL pack for the 2026-11-21 day kit (default since then). Our own instructions and code rules only. The brand material (data/brand/scenarios.md, information.json, style.json of the kit) is NOT in git: it is read at startup from cfg.brand_dir (default <repo>/data/brand, env AGENT_BRAND_DIR). See README.md.",
+  "name": "official",
+  "prompt": "prompt.md",
+  "rules": "rules.json",
+  "phrases": "phrases.json"
+}

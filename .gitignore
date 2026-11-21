@@ -16,3 +16,13 @@ team/runs/**/*.log
 
 # local voice test UI timing log
 team/runs/devui_metrics.jsonl
+
+# 2026-11-21 day kit data: "대회 목적 밖에서 쓰거나 밖으로 옮기거나 공개하지 않습니다" (README / DATA.md).
+# Unpacked at the repository root it lands here; keep it out of git (the submission zip still has it).
+data/brand/
+data/practice_cases.jsonl
+data/examples.json
+data/mock_db.json
+data/mock_db_test.json
+data/audio/practice/
+team/runs/llm_cases/

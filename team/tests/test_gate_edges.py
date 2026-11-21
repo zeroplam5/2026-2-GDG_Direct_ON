@@ -9,11 +9,11 @@ import json
 
 import pytest
 
-from team.agent.config import Config
+from team.agent.config import Config, practice_config
 from team.agent.gate import CONFIRM_FIELD, Gate
 from team.agent.policy import load_rules
 
-RULES = load_rules(Config().rules_path)
+RULES = load_rules(practice_config().rules_path)
 TOOLS = [{"type": "function", "function": {"name": n, "parameters": {
     "type": "object", "required": [a], "properties": {a: {"type": "string"}}}}}
     for n, a in [("get_order_info", "order_id"), ("request_callback", "phone_number"),

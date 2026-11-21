@@ -32,8 +32,13 @@ class LLMConfigError(RuntimeError):
     pass
 
 
+def _bare(model: str) -> str:
+    """Model name without a router prefix ("openai/gpt-5.4-mini" -> "gpt-5.4-mini")."""
+    return (model or "").lower().rsplit("/", 1)[-1]
+
+
 def is_reasoning_model(model: str) -> bool:
-    m = model.lower()
+    m = _bare(model)
     return m.startswith(("gpt-5", "o1", "o3", "o4")) and "chat" not in m
 
 
@@ -54,7 +59,7 @@ def model_params(cfg) -> dict:
     if eff == "auto":
         # gpt-5.1+ (e.g. gpt-5.4-mini) list none|low|medium|high|xhigh and no "minimal";
         # gpt-5 / o-series accept "minimal" (measured 2026-11-18 for gpt-5).
-        eff = ("none" if re.match(r"gpt-5\.\d", cfg.llm_model.lower()) else "minimal") if reasoning else ""
+        eff = ("none" if re.match(r"gpt-5\.\d", _bare(cfg.llm_model)) else "minimal") if reasoning else ""
     if eff:
         p["reasoning_effort"] = eff
     return p

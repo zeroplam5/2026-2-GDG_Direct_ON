@@ -1,0 +1,13 @@
+{
+  "_comment": "OFFICIAL pack fixed phrases (2026-11-21). Pre-synthesized at startup. Wording is ours, not from the kit.",
+  "brand_name": "하루온",
+  "not_heard": "죄송합니다, 잘 듣지 못했습니다. 한 번 더 말씀해 주시겠어요?",
+  "delay_fallback": "확인이 지연되고 있어 지금은 결과를 안내해 드리지 못했습니다. 잠시 후 다시 문의해 주시겠어요?",
+  "error_fallback": "죄송합니다. 지금 시스템 문제로 확인을 마치지 못했습니다.",
+  "tool_round_limit": "확인을 마치지 못했습니다. 다시 한 번 말씀해 주시겠어요?",
+  "unverified_fallback": "정확한 내용은 확인 후 안내해 드리겠습니다.",
+  "unverified_id_fallback": "번호를 정확히 확인하기 위해 한 번 더 말씀해 주시겠어요?",
+  "unconfirmed_time_fallback": "희망하신 시간은 지금 확정해 드릴 수 없습니다.",
+  "unconfirmed_time_note": "희망 시간은 확정되지 않았습니다.",
+  "tool_ack": ["확인해 보겠습니다.", "잠시만요, 조회해 볼게요.", "네, 바로 찾아보겠습니다."]
+}

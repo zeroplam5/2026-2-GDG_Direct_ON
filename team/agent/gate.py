@@ -5,17 +5,28 @@ be sent to tools_url. Blocked calls are never sent (so the evaluator's relay nev
 them) and the model gets a {"status": "not_executed", ...} result telling it what to ask.
 
 Checks, in order:
+  0. values      - required values are not empty ("require_any": one of a group is enough;
+                   confirm="context" write functions: every value argument)
   1. format      - argument values match the per-function regex (if configured)
-  2. grounding   - value arguments appear in this utterance, the session history or the
-                   caller info (after normalising Korean digit words, "데모" -> DEMO, spaces)
-  3. consent     - write functions only (confirm = "explicit" | "request"):
-       a. no refusal / hesitation / correction words in this utterance
-       b. the model quoted the customer's consent (CONFIRM_FIELD), the quote is really in
-          this utterance, is affirmative and is not a puzzled "네?"
-       c. explicit: the agent's previous turn asked about these exact values
-          request:  the customer stated these values in this utterance
-Hybrid by design: the model handles phrasing variety (it picks the consent quote), the code
-has the final say with checks the model cannot fake.
+  2. grounding   - value arguments appear in this utterance, the session history (including
+                   earlier function calls / results), the caller info or earlier turns of this
+                   session (after normalising Korean digit words, "데모" -> DEMO, spaces).
+                   Read functions may also use this turn's function results; write functions
+                   may not ("unconfirmed_lookup": look up first, tell the customer, then act).
+  3. consent     - write functions only, by the function's confirm mode:
+       context  (official pack, 2026-11-21 day kit): the real call logs register a request in
+                the same turn the customer gives the value or the choice, without a separate
+                read-back. So: no refusal / hesitation in this utterance, not a puzzled "네?",
+                and the request itself ("intent" words) appears in this utterance, an earlier
+                customer turn or a recent agent turn.
+       explicit / request (practice pack):
+         a. no refusal / hesitation / correction words in this utterance
+         b. the model quoted the customer's consent (CONFIRM_FIELD), the quote is really in
+            this utterance, is affirmative and is not a puzzled "네?"
+         c. explicit: the agent's previous turn asked about these exact values
+            request:  the customer stated these values in this utterance
+Hybrid by design: the model decides what to call and with which values, the code has the
+final say with checks the model cannot fake.
 
 The per-function table (kind / confirm / value_args / formats) and the consent / refusal word
 patterns come from the single rules file (cfg.rules_path, see prompts/pack.json), so the
@@ -58,7 +69,35 @@ MESSAGES = {
                   "값을 복창하고 진행해도 되는지 한 번만 물으세요."),
     "not_stated": ("실행하지 않았습니다: 고객이 이번 말에서 이 값({values})을 직접 말하지 않았습니다. "
                    "값을 복창하고 진행해도 되는지 한 번만 물으세요."),
+    "missing_value": "실행하지 않았습니다: 필요한 값({arg})이 없습니다. 추측하지 말고 고객에게 물어보세요.",
+    "unconfirmed_lookup": ("실행하지 않았습니다: {arg} 값({value})은 이번에 처음 조회한 결과에만 있습니다. "
+                           "바로 접수하지 말고 조회 결과를 안내한 뒤 어느 건을 진행할지 고객에게 확인하세요."),
+    "no_intent": ("실행하지 않았습니다: 고객이 이 처리를 원한다는 말이 대화에 없습니다. "
+                  "고객이 원하는 것을 먼저 확인하세요."),
 }
+
+# agent turns that are system notices, not questions ("…상담이 자동으로 종료됩니다")
+NOTICE = re.compile(r"자동으로\s*종료|자동\s*종료|상담이\s*종료")
+# argument values that stand for "unknown" (seen 2026-11-21: customer_name="고객님", which the
+# agent's "안녕하세요, 고객님!" made look grounded; phone_number="발신자 정보 없음"). Treated as empty.
+PLACEHOLDER = re.compile(r"^(?:고객|손님|회원|본인|담당자|구매자|주문자)\s*님?$|^(?:없음|미상|모름|알\s*수\s*없음|unknown|none|null|n/?a)$"
+                         r"|정보\s*없음|확인\s*필요|접수\s*불가", re.I)
+RECENT_AGENT_TURNS = 3  # how many recent agent turns may carry the request (context mode)
+
+
+def _values(args: dict, path: str) -> list:
+    """Non-empty scalar values at `path` ("a" or "a.b"; a list on the way is walked)."""
+    cur = [args]
+    for part in path.split("."):
+        nxt = []
+        for c in cur:
+            v = c.get(part) if isinstance(c, dict) else None
+            if isinstance(v, list):
+                nxt.extend(v)
+            elif v is not None:
+                nxt.append(v)
+        cur = nxt
+    return [v for v in cur if not isinstance(v, (dict, list)) and str(v).strip()]
 
 
 def normalize_text(text: str) -> str:
@@ -103,6 +142,7 @@ class Gate:
         self.caller_text = json.dumps(caller, ensure_ascii=False) if caller else ""
         self.schemas: dict[str, dict] = {}
         words = self.table.get("consent") or {}
+        self.placeholder = re.compile(self.table["placeholder"], re.I) if self.table.get("placeholder") else PLACEHOLDER
         self.negative = re.compile(words["negative"]) if words.get("negative") else NEGATIVE
         self.affirmative = re.compile(words["affirmative"]) if words.get("affirmative") else AFFIRMATIVE
         self.puzzled = re.compile(words["puzzled"]) if words.get("puzzled") else PUZZLED
@@ -119,8 +159,10 @@ class Gate:
         return {**base, **functions[name]} if name in functions else base
 
     def needs_consent(self, name: str) -> bool:
+        """Write functions whose consent is a quote the model copies into CONFIRM_FIELD
+        (explicit / request). "context" checks the conversation itself and adds no field."""
         sp = self.spec(name)
-        return sp.get("kind") == "write" and sp.get("confirm", "explicit") != "none"
+        return sp.get("kind") == "write" and sp.get("confirm", "explicit") in ("explicit", "request")
 
     def augment(self, schemas: list[dict]) -> list[dict]:
         """Add the internal consent field to write functions. Input schemas are not modified."""
@@ -149,12 +191,32 @@ class Gate:
                 return text
         return ""
 
+    def recent_agent_texts(self, n: int = RECENT_AGENT_TURNS) -> list[str]:
+        """The last n agent turns of the session history, system notices skipped."""
+        out = []
+        for role, text in reversed(self.history):
+            if role == "agent" and not NOTICE.search(text):
+                out.append(text)
+                if len(out) >= n:
+                    break
+        return out
+
+    def _intent_text(self, utterance: str, prior: str) -> str:
+        """Where a request can come from: this utterance, every earlier customer turn, the recent
+        agent turns (the agent asking "전체 반품할까요, 일부만 할까요?") and earlier turns of this session."""
+        customer = [t for r, t in self.history if r == "customer"]
+        return "\n".join([utterance or "", *customer, *self.recent_agent_texts(), prior or ""])
+
     def _value_args(self, name: str, sp: dict) -> list[str]:
         if "value_args" in sp:
             return list(sp["value_args"])
         return list((self.schemas.get(name, {}).get("parameters") or {}).get("required") or [])
 
-    def check(self, name: str, arguments_json: str, utterance: str, last_agent: str | None = None) -> Decision:
+    def check(self, name: str, arguments_json: str, utterance: str, last_agent: str | None = None,
+              prior: str = "", turn_results: str = "") -> Decision:
+        """prior = earlier turns of this session (live multi-turn use; the evaluator sends one
+        utterance per connection, so it is empty there). turn_results = function results of
+        this turn so far."""
         try:
             args = json.loads(arguments_json or "{}")
             if not isinstance(args, dict):
@@ -163,40 +225,72 @@ class Gate:
             return Decision(False, reason="invalid_arguments", message=MESSAGES["invalid_arguments"])
         quote = str(args.pop(CONFIRM_FIELD, "") or "").strip()
         sp = self.spec(name)
-        value_args = [a for a in self._value_args(name, sp) if a in args]
-        values_txt = ", ".join(f"{a}={args[a]}" for a in value_args) or "요청 내용"
+        mode = sp.get("confirm", "explicit")
+        is_write = sp.get("kind") == "write"
+
+        def real(a):  # values of argument a, placeholders such as "고객님" / "없음" left out
+            return [v for v in _values(args, a) if not self.placeholder.search(str(v).strip())]
+
+        all_value_args = self._value_args(name, sp)
+        value_args = [a for a in all_value_args if real(a)]
+        values_txt = ", ".join(f"{a}={'·'.join(map(str, real(a)))}" for a in value_args) or "요청 내용"
 
         def block(reason, **kw):
             return Decision(False, args, reason, MESSAGES[reason].format(values=values_txt, **kw))
 
-        # 1. format
+        # 0. required values
+        group = sp.get("require_any") or []
+        if group and not any(real(a) for a in group):
+            return block("missing_value", arg=" 또는 ".join(group))
+        if is_write and mode == "context":
+            for a in all_value_args:
+                if not real(a):
+                    return block("missing_value", arg=a)
+        # 1. format (empty / null / placeholder values are not checked here)
         for arg, pattern in (sp.get("formats") or {}).items():
-            if arg in args and not re.fullmatch(pattern, normalize_value(args[arg])):
-                return block("invalid_format", arg=arg, value=args[arg])
-        # 2. grounding
-        sources = normalize_text(utterance) + "|" + normalize_text(" ".join(t for _, t in self.history)) \
-            + "|" + normalize_text(self.caller_text)
+            for v in real(arg):
+                if not re.fullmatch(pattern, normalize_value(v)):
+                    return block("invalid_format", arg=arg, value=v)
+        # 2. grounding: in both normalisations ("공일공" -> 010, and names kept as written)
+        base = "\n".join([utterance or "", " ".join(t for _, t in self.history), self.caller_text, prior or ""])
+        known = (normalize_text(base), normalize_value(base))
+        fresh = (normalize_text(turn_results), normalize_value(turn_results)) if turn_results else ("", "")
         for arg in value_args:
-            v = normalize_value(args[arg])
-            if v and v not in sources:
-                return block("not_grounded", arg=arg, value=args[arg])
+            for v in real(arg):
+                nv = normalize_value(v)
+                if not nv or nv in known[0] or nv in known[1]:
+                    continue
+                if nv in fresh[0] or nv in fresh[1]:
+                    if not is_write:
+                        continue  # a lookup may chain on this turn's results
+                    return block("unconfirmed_lookup", arg=arg, value=v)
+                return block("not_grounded", arg=arg, value=v)
+        if is_write and mode == "context":
+            if self.negative.search(utterance or ""):
+                return block("hesitation")
+            if self.puzzled.match(utterance or ""):
+                return block("puzzled")
+            intent = sp.get("intent")
+            if intent and not re.search(intent, self._intent_text(utterance, prior)):
+                return block("no_intent")
+            return Decision(True, args)
         if not self.needs_consent(name):
             return Decision(True, args)
-        # 3. consent
+        # 3. consent (explicit / request)
         if self.negative.search(utterance or ""):
             return block("hesitation")
         if self.puzzled.match(utterance or "") or (quote and self.puzzled.match(quote)):
             return block("puzzled")
         if not quote or _compact(quote) not in _compact(utterance) or not self.affirmative.search(quote):
             return block("no_consent")
-        mode = sp.get("confirm", "explicit")
+        vals = [normalize_value(v) for a in value_args for v in real(a)]
         if mode == "request":
             said = normalize_text(utterance)
-            if any(normalize_value(args[a]) not in said for a in value_args):
+            if any(v not in said for v in vals):
                 return block("not_stated")
             return Decision(True, args)
         agent = self.last_agent_text() if last_agent is None else last_agent
         agent_norm = normalize_text(agent)
-        if not agent or not self.question.search(agent) or any(normalize_value(args[a]) not in agent_norm for a in value_args):
+        if not agent or not self.question.search(agent) or any(v not in agent_norm for v in vals):
             return block("not_asked")
         return Decision(True, args)

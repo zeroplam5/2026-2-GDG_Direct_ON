@@ -3,13 +3,13 @@ all come from the same place, and a pack folder switches every brand-specific fi
 import json
 
 from team.agent import policy
-from team.agent.config import Config
+from team.agent.config import PRACTICE_PACK, Config, practice_config
 from team.agent.gate import CONFIRM_FIELD, Gate
 
-PRACTICE = policy.load_rules(Config().rules_path)
+PRACTICE = policy.load_rules(practice_config().rules_path)
 
 
-def test_practice_pack_is_the_default_and_complete():
+def test_practice_pack_is_complete():
     for key in ("functions", "_default", "handoff", "consent", "arg_labels"):
         assert key in PRACTICE
 
@@ -72,6 +72,6 @@ def test_pack_dir_switches_all_files_but_explicit_paths_win(tmp_path, monkeypatc
 
 def test_practice_pack_manifest_points_at_existing_files():
     cfg = Config()
-    cfg.apply_pack(str(Config().rules_path).rsplit("practice_rules.json", 1)[0])
+    cfg.apply_pack(str(PRACTICE_PACK))
     for path in (cfg.prompt_path, cfg.rules_path, cfg.phrases_path):
         assert open(path, encoding="utf-8").read()
