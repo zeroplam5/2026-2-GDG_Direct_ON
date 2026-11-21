@@ -1,36 +1,30 @@
-"""Practice mock function server (team implementation of mock_tools/mock_api_template.py).
+"""Mock function server (team implementation of the kit's mock_tools/mock_server.py).
 
-Same routes and response shapes as the starter-kit skeleton:
-    GET  /tools                      -> [{"type":"function","function":{...}}, ...]
-    POST /tools/{name}  (X-Session-Id) -> recorded result for matching arguments
-    GET  /calls?session_id=...       -> call log used by eval/run_eval.py
+Routes (official kit directon-2026-voice-cs, SPEC.md "모의 함수 서버"):
+    GET  /tools                      -> [{"type":"function","function":{...}}, ...]  (= tools.json)
+    POST /tools/{name}  (X-Session-Id) -> result JSON
+    GET  /calls?session_id=...       -> our own call log (debugging; the official evaluator's
+                                        relay records calls and adds the per-function delay)
 
-What is from the starter kit vs. our EXAMPLE choices (not official rules):
-  * found     -> the "result" object stored in the data file          (starter kit data)
-  * not found -> {"status":"not_found","message":...}, HTTP 200        (shape from docs/MOCK_API_TASK.md;
-                                                                       message text is our choice)
-  * unknown function -> HTTP 404 {"error":"unknown function"}         (same as the skeleton)
-                        but ALSO recorded in /calls with "known": false (our choice: makes illegal
-                        calls visible during practice; the skeleton did not record them)
-  * missing required argument -> HTTP 200 {"status":"invalid"} recorded, matched=false (official status name)
-  * OFFICIAL functions (SPEC.md, 2026-11-21), --match normalized (default):
-      lookup  get_order_info, get_return_info: record whose phone OR order number matches
-              (hyphens/spaces ignored), else {"status":"not_found"}
-      accept  cancel_order, return_order, return_order_item, exchange_order, request_callback:
-              record for the same number if any (e.g. "already_requested"), else {"status":"ok"};
-              required value missing -> {"status":"invalid"}
-      search  search_products: closest stored query (difflib ratio), even if not identical
-  * other functions (starter-kit demo data): same arguments after trimming, case-folding and
-    removing spaces/hyphens -> stored result, else not_found. --match strict: exact JSON equality
-    for every function.
+Responses (--match normalized, the default) follow SPEC.md:
+  * read functions (get_order_info, get_return_info): the record whose phone / order number
+    equals one given in the call (hyphens, spaces, case ignored); get_order_info also finds a
+    record whose result lists that order number. None -> {"status":"not_found"}.
+    No number at all -> {"status":"invalid"}.
+  * write functions (cancel_order, return_order, return_order_item, exchange_order,
+    request_callback and any other function): required values missing -> {"status":"invalid"};
+    a record for the same number -> its result (e.g. "already_requested"); otherwise
+    {"status":"ok"} with the message used by the data's ok records.
+  * search_products: the record whose query (or product names) is closest to the query
+    (character bigram overlap). Nothing in common -> {"status":"not_found"}.
+  * unknown function -> HTTP 404 {"error":"unknown function"}, also logged with "known": false.
+  * --match strict: the old exact-JSON-equality matching (practice tests only).
 
-Data files are configurable so the official data (2026-11-21) can be dropped in:
-    --tools PATH / MOCK_TOOLS_PATH   (default data/demo_tools.json)
-    --data / --db PATH / MOCK_DATA_PATH  (default data/demo_mock_data.json; official: data/mock_db.json)
-Data format assumed: {function_name: [{"arguments": {...}, "result": {...}}, ...]} (starter-kit format).
-
-In the official environment the function relay records calls; /calls exists only for
-compatibility with the starter-kit evaluator.
+Data files:
+    --tools PATH / MOCK_TOOLS_PATH            (default data/demo_tools.json)
+    --db PATH (= --data) / MOCK_DATA_PATH     (default data/demo_mock_data.json)
+Official run: bash start_mock.sh <mock_db_test.json> -> --db <file> --tools official/tools.json --host 0.0.0.0
+Data format: {function_name: [{"arguments": {...}, "result": {...}}, ...]}.
 """
 from __future__ import annotations
 
@@ -40,7 +34,6 @@ import os
 import re
 import threading
 import time
-from difflib import SequenceMatcher
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -50,24 +43,44 @@ DEFAULT_TOOLS = REPO / "data" / "demo_tools.json"
 DEFAULT_DATA = REPO / "data" / "demo_mock_data.json"
 
 
-# Official function classes (SPEC.md 「모의 함수 서버가 할 일」, 2026-11-21)
-OFFICIAL_KIND = {
-    "get_order_info": "lookup", "get_return_info": "lookup",
-    "cancel_order": "accept", "return_order": "accept", "return_order_item": "accept",
-    "exchange_order": "accept", "request_callback": "accept",
-    "search_products": "search",
-}
-# argument names that carry a phone number or an order number
-ID_KEYS = {"order_id", "order_number", "buyer_cellphone", "customer_phone_number", "phone_number"}
+READ_FUNCTIONS = {"get_order_info", "get_return_info"}
+SEARCH_FUNCTIONS = {"search_products"}
+# arguments that say whose record it is (same list as the official scorer, eval/score.py ID_ARGS)
+ID_ARGS = ("order_id", "buyer_cellphone", "customer_phone_number", "phone_number", "order_number")
+NOT_FOUND_MESSAGE = {"get_order_info": "주문 내역이 없습니다.", "get_return_info": "반품 상품이 없습니다.",
+                     "search_products": "검색 결과가 없습니다."}
+OK_MESSAGE = {"cancel_order": "주문 취소 접수 성공", "return_order": "주문 반품 접수 성공",
+              "return_order_item": "상품 반품 접수 성공", "exchange_order": "주문 교환 접수 성공",
+              "request_callback": "고객 정보 접수 성공"}
+
+
+def _empty(v) -> bool:
+    return v is None or (isinstance(v, (str, list, dict)) and not (v.strip() if isinstance(v, str) else v))
 
 
 def _id(v) -> str:
-    """Phone / order number for comparison: hyphens, spaces and case ignored."""
-    return re.sub(r"[\s\-]", "", str(v)).casefold() if isinstance(v, (str, int)) else ""
+    """Comparable phone / order number: letters and digits only, upper case."""
+    return re.sub(r"[^0-9A-Za-z]", "", str(v)).upper()
 
 
-def _text(v) -> str:
-    return re.sub(r"\s+", "", str(v or "")).casefold()
+def _ids(args: dict) -> dict:
+    out = {k: _id(args[k]) for k in ID_ARGS if not _empty(args.get(k)) and _id(args[k])}
+    codes = sorted(_id(i.get("order_item_code")) for i in (args.get("return_items") or [])
+                   if isinstance(i, dict) and not _empty(i.get("order_item_code")))
+    if codes:
+        out["order_item_code"] = ",".join(codes)
+    return out
+
+
+def _grams(s: str) -> set:
+    """Characters and character pairs, without spaces and the brand name every product shares."""
+    s = re.sub(r"\s+|하루온", "", str(s or "")).casefold()
+    return {s[i:i + 2] for i in range(len(s) - 1)} | set(s)
+
+
+def _similarity(a: str, b: str) -> float:
+    x, y = _grams(a), _grams(b)
+    return 2 * len(x & y) / (len(x) + len(y)) if x and y else 0.0
 
 
 def _norm(v):
@@ -83,8 +96,9 @@ def _norm(v):
 class MockStore:
     def __init__(self, tools_path, data_path, match="normalized"):
         self.tools_path, self.data_path, self.match = Path(tools_path), Path(data_path), match
-        self.tools = json.loads(self.tools_path.read_text(encoding="utf-8"))
-        self.data = json.loads(self.data_path.read_text(encoding="utf-8"))
+        raw = json.loads(self.tools_path.read_text(encoding="utf-8"))
+        self.tools = [t.get("function", t) for t in raw]  # bare functions or OpenAI "tools" entries
+        self.data = json.loads(self.data_path.read_text(encoding="utf-8")) if self.data_path.is_file() else {}
         self.calls: list[dict] = []
         self.lock = threading.Lock()
 
@@ -96,65 +110,65 @@ class MockStore:
         return next((t for t in self.tools if t["name"] == name), None)
 
     def lookup(self, name, args):
-        """Return (response_json_dict, matched_bool) - same contract as the skeleton.
-
-        Official functions (SPEC.md 「모의 함수 서버」, 2026-11-21) follow the official rules
-        (see _official); any other function (e.g. starter-kit demo data) keeps the old
-        "same arguments -> stored result" behaviour."""
+        """Return (response_json_dict, matched_bool): matched = a data record was used."""
         spec = self.spec(name) or {}
         required = (spec.get("parameters") or {}).get("required") or []
         if not isinstance(args, dict):
             return {"status": "invalid", "message": "arguments must be a JSON object"}, False
-        missing = [k for k in required if args.get(k) in (None, "", [], {})]
+        missing = [k for k in required if _empty(args.get(k))]
         if missing:
-            return {"status": "invalid", "message": "missing: " + ", ".join(missing)}, False
-        if self.match == "normalized" and name in OFFICIAL_KIND:
-            return self._official(name, args)
-        f = _norm if self.match == "normalized" else (lambda x: x)
-        want = f(args)
-        for rec in self.data.get(name, []):
-            if f(rec.get("arguments")) == want:
-                return rec["result"], True
-        return {"status": "not_found", "message": "일치하는 데이터 없음 (예제 응답)"}, False
-
-    def _official(self, name, args):
-        rows = self.data.get(name, [])
-        kind = OFFICIAL_KIND[name]
-        ids = {k: _id(v) for k, v in args.items() if k in ID_KEYS and _id(v)}
-        if kind == "lookup":
-            # phone number OR order number of a stored record (hyphens / spaces ignored)
+            return {"status": "invalid", "message": "필수 값 없음: " + ", ".join(missing)}, False
+        records = self.data.get(name, [])
+        if self.match == "strict":
+            for rec in records:
+                if rec.get("arguments") == args:
+                    return rec["result"], True
+            return {"status": "not_found", "message": NOT_FOUND_MESSAGE.get(name, "일치하는 데이터 없음")}, False
+        if name in SEARCH_FUNCTIONS:
+            return self._search(name, args, records)
+        ids = _ids(args)
+        if name in READ_FUNCTIONS:
             if not ids:
-                return {"status": "invalid", "message": "전화번호 또는 주문번호가 필요합니다"}, False
-            # Several records for one number = snapshots from different dates; the server cannot
-            # tell which one fits the call, so the first is used. On the 45 reference calls of the
-            # practice data this reproduces 44; the one miss (P0177-09) differs only in empty
-            # address fields, while "last record" would miss P0196-02 with a different 배송상태.
-            for rec in rows:
-                rid = {k: _id(v) for k, v in (rec.get("arguments") or {}).items() if k in ID_KEYS}
-                if any(rid.get(k) == v for k, v in ids.items()):
+                return {"status": "invalid", "message": "주문번호나 전화번호가 필요합니다."}, False
+            return self._read(name, ids, records)
+        return self._write(name, ids, records)
+
+    def _read(self, name, ids, records):
+        for rec in records:  # the number the customer gave is one of the record's arguments
+            rid = _ids(rec.get("arguments") or {})
+            if any(rid.get(k) == v for k, v in ids.items()):
+                return rec["result"], True
+        order = ids.get("order_id")
+        if order and len(order) >= 10:  # a record found by phone whose result lists this order number
+            # (10+ characters: a short fragment would match digits of dates / amounts)
+            for rec in records:
+                if order in _id(json.dumps(rec.get("result"), ensure_ascii=False)):
                     return rec["result"], True
-            return {"status": "not_found"}, False
-        if kind == "accept":
-            # a stored record for the same number wins (e.g. "already_requested"),
-            # otherwise required values are present (checked above) -> ok
-            for rec in rows:
-                rargs = rec.get("arguments") or {}
-                rid = {k: _id(v) for k, v in rargs.items() if k in ID_KEYS}
-                same = (any(rid.get(k) == v for k, v in ids.items()) if ids and rid
-                        else _norm(rargs) == _norm(args))
-                if same:
+        return {"status": "not_found", "message": NOT_FOUND_MESSAGE.get(name, "일치하는 데이터 없음")}, False
+
+    def _write(self, name, ids, records):
+        if ids:
+            for rec in records:
+                rid = _ids(rec.get("arguments") or {})
+                same = [k for k in ids if k in rid]
+                if same and all(rid[k] == ids[k] for k in same):
                     return rec["result"], True
-            return {"status": "ok"}, False
-        # search: closest stored query, even if not identical
-        q = _text(args.get("query", ""))
-        best, score = None, -1.0
-        for rec in rows:
-            s = SequenceMatcher(None, q, _text((rec.get("arguments") or {}).get("query", ""))).ratio()
+        ok = next((r["result"] for r in records if (r.get("result") or {}).get("status") == "ok"), None)
+        return dict(ok or {"status": "ok", "message": OK_MESSAGE.get(name, "접수 성공")}), False
+
+    def _search(self, name, args, records):
+        query = " ".join(str(v) for v in args.values() if isinstance(v, str))
+        best, score = None, 0.0
+        for rec in records:
+            res = rec.get("result") or {}
+            items = (res.get("data") or {}).get("결과") or [] if isinstance(res.get("data"), dict) else []
+            names = " ".join(sorted({str(i.get("제품명", "")) for i in items if isinstance(i, dict)}))
+            s = max(_similarity(query, (rec.get("arguments") or {}).get("query", "")), _similarity(query, names))
             if s > score:
                 best, score = rec, s
         if best is None:
-            return {"status": "not_found"}, False
-        return best["result"], score >= 0.999
+            return {"status": "not_found", "message": NOT_FOUND_MESSAGE.get(name, "검색 결과가 없습니다.")}, False
+        return best["result"], True
 
     def record(self, sid, name, args, matched, known=True, status=None):
         with self.lock:
@@ -222,7 +236,7 @@ if __name__ == "__main__":
     p.add_argument("--port", type=int, default=8100)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--tools")
-    p.add_argument("--data", "--db", dest="data", help="mock data file (--db as in the official start_mock.sh)")
+    p.add_argument("--db", "--data", dest="data", help="data file (official: mock_db.json / mock_db_test.json)")
     p.add_argument("--match", choices=["normalized", "strict"], default="normalized")
     a = p.parse_args()
     srv, store = serve(a.port, a.host, a.tools, a.data, a.match)

@@ -57,15 +57,17 @@ def test_lookup_by_order_number_or_phone_ignoring_hyphens_and_spaces(store):
 
 
 def test_lookup_not_found_and_invalid(store):
-    assert store.lookup("get_order_info", {"order_id": "20990101-9999999"}) == ({"status": "not_found"}, False)
+    r, matched = store.lookup("get_order_info", {"order_id": "20990101-9999999"})
+    assert r["status"] == "not_found" and not matched  # message text is added by the server
     assert store.lookup("get_order_info", {})[0]["status"] == "invalid"  # no number at all
     assert store.lookup("get_return_info", {})[0]["status"] == "invalid"  # required value missing
     assert store.lookup("get_return_info", {"customer_phone_number": "010-0000-0002"}) == ({"status": "not_found"}, True)
 
 
 def test_accept_is_ok_without_record_and_invalid_without_required(store):
-    assert store.lookup("cancel_order", {"order_id": "X-1", "reason": "변심"}) == ({"status": "ok"}, False)
-    assert store.lookup("request_callback", {"customer_name": "가", "phone_number": "01000000009"})[0] == {"status": "ok"}
+    r, matched = store.lookup("cancel_order", {"order_id": "X-1", "reason": "변심"})
+    assert r["status"] == "ok" and not matched  # official ok message is added (e.g. "주문 취소 접수 성공")
+    assert store.lookup("request_callback", {"customer_name": "가", "phone_number": "01000000009"})[0]["status"] == "ok"
     assert store.lookup("cancel_order", {"order_id": "X-1"})[0]["status"] == "invalid"
     assert store.lookup("cancel_order", {"order_id": "X-1", "reason": ""})[0]["status"] == "invalid"
 
@@ -76,9 +78,19 @@ def test_accept_returns_stored_record_for_same_number(store):
 
 
 def test_search_returns_closest_record(store):
-    r, exact = store.lookup("search_products", {"query": "관절가드 두 박스 주세요"})
-    assert r["data"]["결과"] == ["관절"] and exact is False
+    assert store.lookup("search_products", {"query": "관절가드 두 박스 주세요"})[0]["data"]["결과"] == ["관절"]
     assert store.lookup("search_products", {"query": "혈당 가드"}) == ({"status": "ok", "data": {"결과": ["혈당"]}}, True)
+
+
+def test_search_ignores_word_order(store):
+    # character-pair overlap, not sequence matching: the meaning counts, not the order
+    assert store.lookup("search_products", {"query": "가드 혈당"})[0]["data"]["결과"] == ["혈당"]
+    assert store.lookup("search_products", {"query": "2박스 가드 관절"})[0]["data"]["결과"] == ["관절"]
+
+
+def test_search_with_nothing_in_common_is_not_found(store):
+    r, matched = store.lookup("search_products", {"query": "운동화"})
+    assert r["status"] == "not_found" and not matched
 
 
 def test_http_routes_and_db_option(tmp_path):
@@ -91,7 +103,7 @@ def test_http_routes_and_db_option(tmp_path):
     try:
         assert [t["function"]["name"] for t in httpx.get(url + "/tools").json()] == [t["name"] for t in TOOLS]
         r = httpx.post(url + "/tools/cancel_order", json={"order_id": "X-2", "reason": "변심"}, headers={"X-Session-Id": "S"})
-        assert r.json() == {"status": "ok"}
+        assert r.json()["status"] == "ok"
         assert httpx.post(url + "/tools/not_defined", json={}).status_code == 404
     finally:
         srv.shutdown()

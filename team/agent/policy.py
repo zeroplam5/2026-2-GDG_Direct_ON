@@ -80,6 +80,10 @@ def function_rules_text(rules: dict | None) -> str:
         elif confirm == "request":
             how = f"고객이 이번 말에서 {_obj(args)} 직접 말하며 요청했을 때만 호출한다." if args \
                 else "고객이 이번 말에서 직접 요청했을 때만 호출한다."
+        elif confirm == "implicit":
+            need = f"필요한 {args}" if args else "필요한 정보"
+            how = (f"고객이 원하고 {need}가 대화에 있으면(직전 질문에 답한 경우 포함) 값을 다시 복창해 묻지 말고 바로 호출한다. "
+                   "정보가 없으면 먼저 묻는다. 고객이 거절하거나 망설이면 부르지 않는다.")
         else:
             how = "고객 의사가 분명할 때 호출한다."
         lines.append(f"- {name} (접수·변경): {how}")
@@ -102,43 +106,65 @@ def load_phrases(path: str) -> dict:
 
 
 _ROLE = {"user": "customer", "customer": "customer", "고객": "customer",
-         "assistant": "agent", "agent": "agent", "상담원": "agent"}
+         "assistant": "agent", "agent": "agent", "상담원": "agent",
+         "tool_call": "tool_call", "tool_result": "tool_result"}
+_LINK = re.compile(r"<link>\s*\S*|https?://\S+")
+HISTORY_MAX_CHARS = 8000  # official practice data: longest history is ~5,100 chars (2026-11-21)
+
+
+def _history_text(h: dict) -> str | None:
+    """Text of one official history item (2026-11-21 kit, SPEC.md):
+    {"role": "customer"|"agent", "text"} | {"role": "tool_call", "name", "arguments"}
+    | {"role": "tool_result", "name", "result"}."""
+    role = str(h.get("role") or "").lower()
+    if role == "tool_call":
+        return f"{h.get('name', '?')} {json.dumps(h.get('arguments'), ensure_ascii=False)}"
+    if role == "tool_result":
+        return f"{h.get('name', '?')} → {json.dumps(h.get('result'), ensure_ascii=False)}"
+    text = h.get("text") or h.get("content") or h.get("utterance")
+    if text is None:
+        return None
+    # recorded chat transcripts contain links; on the phone they are never read out
+    return _LINK.sub("(링크)", str(text))
 
 
 def normalize_history(history) -> list[tuple[str, str]]:
-    """THE single place that knows the history shape. The starter kit only shows history=[]
-    and the official schema is published on 2026-11-21: adapt this function then.
-    Returns [(role, text)] with role "customer" | "agent" | other label, or [] when the
-    shape is unknown (callers then fall back to the raw JSON).
-    Official shape (SPEC.md, 2026-11-21): {"role": "customer"|"agent", "text"} plus function
-    records {"role": "tool_call", "name", "arguments"} and {"role": "tool_result", "name",
-    "result"}. Function records become ("tool_call" | "tool_result", "name {json}") so the
-    numbers in them count as stated (gate grounding) and the model sees earlier results."""
-    if not isinstance(history, list) or not all(isinstance(h, dict) for h in history):
+    """THE single place that knows the history shape (official kit 2026-11-21: customer /
+    agent / tool_call / tool_result items, see _history_text).
+    Returns [(role, text)] with role "customer" | "agent" | "tool_call" | "tool_result" |
+    other label. Items of an unknown shape are skipped, not the whole history."""
+    if not isinstance(history, list):
         return []
     out = []
     for h in history:
-        role = str(h.get("role") or h.get("speaker") or "?").lower()
-        if role in ("tool_call", "tool_result"):
-            body = h.get("arguments") if role == "tool_call" else h.get("result")
-            out.append((role, f"{h.get('name', '')} {json.dumps(body, ensure_ascii=False)}"))
+        if not isinstance(h, dict):
             continue
-        text = h.get("text") or h.get("content") or h.get("utterance")
+        text = _history_text(h)
         if text is None:
-            continue  # an entry without text is skipped, the rest of the history is kept
-        out.append((_ROLE.get(role, role), str(text)))
+            continue
+        role = h.get("role") or h.get("speaker") or "?"
+        out.append((_ROLE.get(str(role).lower(), str(role)), text))
     return out
 
 
 def format_history(history) -> str:
-    """Known shapes are rendered as "고객: …" / "상담원: …" lines, anything else as JSON."""
+    """Lines "고객: …" / "상담원: …" / "함수 호출: …" / "함수 결과: …". When too long, whole
+    lines are dropped from the oldest side (never cut in the middle of a result)."""
     if not history:
         return ""
     turns = normalize_history(history)
+    if not turns:
+        return json.dumps(history, ensure_ascii=False)[-HISTORY_MAX_CHARS:]
     who = {"customer": "고객", "agent": "상담원", "tool_call": "함수 호출", "tool_result": "함수 결과"}
     lines = [f"{who.get(r, r)}: {t}" for r, t in turns]
-    s = "\n".join(lines) if lines else json.dumps(history, ensure_ascii=False)
-    return s[-3000:]
+    kept, size = [], 0
+    for line in reversed(lines):
+        if kept and size + len(line) + 1 > HISTORY_MAX_CHARS:
+            kept.append("(앞선 대화 생략)")
+            break
+        kept.append(line)
+        size += len(line) + 1
+    return "\n".join(reversed(kept))
 
 
 def build_static_prompt(template: str, phrases: dict, rules: dict | None = None, now=None) -> str:

@@ -1,3 +1,6 @@
+# Official kit (real consultation data: event use only, never publish - DATA.md)
+directon-2026-voice-cs/
+
 # Secrets
 .env
 .env.*

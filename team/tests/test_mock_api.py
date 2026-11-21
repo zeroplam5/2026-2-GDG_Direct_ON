@@ -36,7 +36,7 @@ def test_known_function_no_matching_data(mock_server):
 def test_missing_required_argument(mock_server):
     url, _ = mock_server
     r = httpx.post(url + "/tools/get_order_info", json={}, headers={"X-Session-Id": "S4"})
-    assert r.json()["status"] == "invalid"  # official status name (SPEC.md)
+    assert r.json()["status"] == "invalid"  # official status name (SPEC.md, 2026-11-21)
 
 
 def test_undefined_function_is_404_and_logged(mock_server):

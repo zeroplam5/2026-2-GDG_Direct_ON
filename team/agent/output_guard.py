@@ -97,6 +97,9 @@ class OutputGuard:
         self.claim_words = re.compile(words.get("claim") or CLAIM_WORDS)
         self.negation_words = re.compile(words.get("negation") or NEGATION_WORDS)
         self.result_time = re.compile(words.get("result_time") or RESULT_TIME)
+        # optional: sentences that state the brand's general contact policy ("업무 시간인 오전 10시부터
+        # … 순서대로 연락드리고") are not a time booked for this customer (official EX07)
+        self.policy_words = re.compile(words["policy"]) if words.get("policy") else None
         self.question = re.compile(((rules or {}).get("consent") or {}).get("question") or QUESTION.pattern)
 
     def time_claim(self, sentence: str, results: str) -> tuple[str, bool] | None:
@@ -105,6 +108,8 @@ class OutputGuard:
         if not self.time_words.search(sentence) or not self.claim_words.search(sentence):
             return None
         if self.negation_words.search(sentence) or self.result_time.search(results or ""):
+            return None
+        if self.policy_words and self.policy_words.search(sentence):
             return None
         words = ",".join(m.group(0) for m in self.time_words.finditer(sentence))
         return words, bool(self.question.search(sentence))

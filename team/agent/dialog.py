@@ -162,7 +162,11 @@ class Dialog:
             decisions = [None] * len(calls)
             if self.gate:
                 last_agent = self._last_agent_text(turn_start)
-                decisions = [self.gate.check(c.name, c.arguments, user_text, last_agent) for c in calls]
+                # real results of earlier rounds count as "in the conversation"; the gate's own
+                # "not_executed" notes quote the rejected value and must not ground it
+                earlier = "\n".join(str(msg.get("content") or "") for msg in self.messages
+                                    if msg["role"] == "tool" and '"not_executed"' not in str(msg.get("content")))
+                decisions = [self.gate.check(c.name, c.arguments, user_text, last_agent, earlier) for c in calls]
                 m["gate"].extend(d.log_entry(c.name) for c, d in zip(calls, decisions))
                 self._dbg("gate", decisions=[{"name": c.name, "allowed": d.allowed, "reason": d.reason,
                                               "args": d.args, "message": d.message}

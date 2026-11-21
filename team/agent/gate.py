@@ -8,12 +8,16 @@ Checks, in order:
   1. format      - argument values match the per-function regex (if configured)
   2. grounding   - value arguments appear in this utterance, the session history or the
                    caller info (after normalising Korean digit words, "데모" -> DEMO, spaces)
-  3. consent     - write functions only (confirm = "explicit" | "request"):
+  3. consent     - write functions only (confirm = "explicit" | "request" | "implicit"):
        a. no refusal / hesitation / correction words in this utterance
        b. the model quoted the customer's consent (CONFIRM_FIELD), the quote is really in
           this utterance, is affirmative and is not a puzzled "네?"
        c. explicit: the agent's previous turn asked about these exact values
           request:  the customer stated these values in this utterance
+       implicit: only a. and the puzzled check - no quote, no read-back question. The official
+          practice data (2026-11-21) calls request_callback / return_order right after the
+          customer gives the values or answers "전체로 해 주세요"; a read-back question there
+          costs the function score of that item.
 Hybrid by design: the model handles phrasing variety (it picks the consent quote), the code
 has the final say with checks the model cannot fake.
 
@@ -122,13 +126,17 @@ class Gate:
         sp = self.spec(name)
         return sp.get("kind") == "write" and sp.get("confirm", "explicit") != "none"
 
+    def needs_quote(self, name: str) -> bool:
+        """The model must quote the customer's consent (internal field) - not for implicit."""
+        return self.needs_consent(name) and self.spec(name).get("confirm", "explicit") != "implicit"
+
     def augment(self, schemas: list[dict]) -> list[dict]:
         """Add the internal consent field to write functions. Input schemas are not modified."""
         out = []
         for s in schemas or []:
             f = s.get("function", s)
             self.schemas[f.get("name", "")] = f
-            if not self.needs_consent(f.get("name", "")):
+            if not self.needs_quote(f.get("name", "")):
                 out.append(s)
                 continue
             s2 = copy.deepcopy(s)
@@ -154,7 +162,11 @@ class Gate:
             return list(sp["value_args"])
         return list((self.schemas.get(name, {}).get("parameters") or {}).get("required") or [])
 
-    def check(self, name: str, arguments_json: str, utterance: str, last_agent: str | None = None) -> Decision:
+    def check(self, name: str, arguments_json: str, utterance: str, last_agent: str | None = None,
+              extra_sources: str = "") -> Decision:
+        """extra_sources: text that also counts as "in the conversation" for grounding, i.e. the
+        function results of earlier rounds of this turn (order number found by get_order_info
+        and then used by return_order in the same turn)."""
         try:
             args = json.loads(arguments_json or "{}")
             if not isinstance(args, dict):
@@ -171,11 +183,12 @@ class Gate:
 
         # 1. format
         for arg, pattern in (sp.get("formats") or {}).items():
-            if arg in args and not re.fullmatch(pattern, normalize_value(args[arg])):
+            # empty / null optional ids (get_order_info gets order_id OR buyer_cellphone) are not checked
+            if arg in args and normalize_value(args[arg]) and not re.fullmatch(pattern, normalize_value(args[arg])):
                 return block("invalid_format", arg=arg, value=args[arg])
         # 2. grounding
         sources = normalize_text(utterance) + "|" + normalize_text(" ".join(t for _, t in self.history)) \
-            + "|" + normalize_text(self.caller_text)
+            + "|" + normalize_text(self.caller_text) + "|" + normalize_text(extra_sources)
         for arg in value_args:
             v = normalize_value(args[arg])
             if v and v not in sources:
@@ -187,6 +200,8 @@ class Gate:
             return block("hesitation")
         if self.puzzled.match(utterance or "") or (quote and self.puzzled.match(quote)):
             return block("puzzled")
+        if not self.needs_quote(name):  # implicit
+            return Decision(True, args)
         if not quote or _compact(quote) not in _compact(utterance) or not self.affirmative.search(quote):
             return block("no_consent")
         mode = sp.get("confirm", "explicit")

@@ -55,7 +55,7 @@ class Config:
     # soniox provider (11/21 official STT). Model names change: check GET https://api.soniox.com/v1/models
     soniox_url: str = "wss://stt-rt.soniox.com/transcribe-websocket"
     soniox_api_key_env: str = "SONIOX_API_KEY"
-    soniox_model: str = "stt-rt-v4"         # contest site (11/21) names stt-rt-v6: set AGENT_SONIOX_MODEL in .env
+    soniox_model: str = "stt-rt-v6"         # contest site (11/21) model
     # how the API key is sent (not verified with a real key yet):
     #   "config" = api_key in the first JSON message (current behaviour, Soniox reference)
     #   "header" = Authorization: Bearer header (contest site example, 11/20)
