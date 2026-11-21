@@ -18,7 +18,7 @@ def test_prompt_section_is_generated_from_the_same_table_the_gate_uses():
     text = policy.function_rules_text(PRACTICE)
     for name in PRACTICE["functions"]:
         assert name in text
-    assert "get_order_info (조회): 주문번호가 대화에 나오면 바로 호출한다." in text
+    assert "get_order_info (조회): 주문번호·주문자 전화번호가 대화에 나오면 바로 호출한다." in text  # either number (official get_order_info)
     # request_callback has a confirm_template: the code reads the number back, not the model
     assert "request_callback (접수·변경): 고객이 원하면 전화번호 확인 질문을 직접 말하지 말고" in text
     assert "시스템이 정확한 값으로 확인 질문을 대신 한다" in text
