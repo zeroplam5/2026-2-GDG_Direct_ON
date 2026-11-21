@@ -14,6 +14,11 @@ pipeline and the starter-kit evaluator:
     (soniox_fallback_silence_ms) + batch STT if Soniox never sends "<end>" or the stream fails
   * a new non-empty token after "<end>" means the customer resumed: the pending end is dropped
 
+Also used by AGENT_STT_STREAM=1 (eou_mode=vad, stt_provider=soniox): the stream only transcribes
+while the customer speaks, the local VAD still decides the end of the utterance ("<end>" is
+ignored). At the commit the session sends {"type":"finalize"}, waits for "<fin>" (at most
+stream_finalize_ms) and takes text() = final tokens + the last non-final tokens.
+
 Authentication follows cfg.soniox_auth (providers/stt.soniox_auth): "config" (default, api_key in the
 first message), "header" (Authorization: Bearer, as in the contest site example) or "both".
 Which one Soniox accepts is not verified with a real key yet.
@@ -44,6 +49,11 @@ class SonioxStream:
         self.on_end = on_end      # called with the final text since the previous "<end>"
         self.sid = sid
         self.final: list[str] = []
+        self.partial = ""        # non-final tokens of the latest message (Soniox resends them each time)
+        self.fins = 0            # "<fin>" tokens received (answers to finalize())
+        self._fin = asyncio.Event()
+        self.sent_ms = 0         # audio queued so far, in stream time
+        self.cut_ms = 0          # tokens starting before this (stream time) belong to a cleared turn
         self.q: asyncio.Queue = asyncio.Queue()
         self.task: asyncio.Task | None = None
         self.error: str | None = None
@@ -77,9 +87,41 @@ class SonioxStream:
         # frames are queued while connecting too, so Soniox gets the whole utterance
         if self.error is None and not self.closed:
             self.q.put_nowait(frame)
+            self.sent_ms += len(frame) * 1000 // 32000  # 16 kHz s16le mono
 
     def clear(self):
+        """Forget the text so far. Tokens with a start time before now (late tokens of the cleared
+        speech) are dropped when they arrive; tokens without timestamps are kept."""
         self.final.clear()
+        self.partial = ""
+        self.cut_ms = self.sent_ms
+
+    def text(self) -> str:
+        """Final tokens + the latest non-final ones since the last clear()."""
+        return ("".join(self.final) + self.partial).strip()
+
+    async def finalize(self, timeout_s: float) -> str:
+        """Ask Soniox to finalize everything heard so far and wait for its "<fin>" token, at most
+        timeout_s. Returns "fin", "timeout" (ignored / not supported, e.g. by a gateway) or
+        "error" (stream failed or closed while waiting); the text so far is usable in every case."""
+        if not self.ok:
+            return "error"
+        n = self.fins
+        self.q.put_nowait(json.dumps({"type": "finalize"}))  # after the frames already queued
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout_s
+        while self.fins == n:
+            if not self.ok:
+                return "error"
+            left = end - loop.time()
+            if left <= 0:
+                return "timeout"
+            self._fin.clear()
+            try:
+                await asyncio.wait_for(self._fin.wait(), min(left, 0.05))
+            except TimeoutError:
+                pass
+        return "fin"
 
     async def _send_loop(self, ws):
         while True:
@@ -87,7 +129,7 @@ class SonioxStream:
             if f is None:
                 await ws.send("")  # end of audio
                 return
-            await ws.send(f)
+            await ws.send(f)  # bytes = audio, str = control message (finalize)
 
     async def _run(self):
         import websockets
@@ -102,6 +144,7 @@ class SonioxStream:
                         msg = json.loads(raw)
                         if msg.get("error_code") or msg.get("error_message"):
                             raise RuntimeError(f"soniox error {msg.get('error_code')}: {msg.get('error_message')}")
+                        partial, fin = [], False
                         for tok in msg.get("tokens", []):
                             t = tok.get("text", "")
                             if t == "<end>":
@@ -110,12 +153,17 @@ class SonioxStream:
                                 # clears the buffer when it commits and after its response.
                                 self.on_end("".join(self.final).strip())
                             elif t == "<fin>":
-                                continue
+                                fin = True
                             else:
+                                if isinstance(tok.get("start_ms"), (int, float)) and tok["start_ms"] < self.cut_ms:
+                                    continue  # late token of speech from before the last clear()
                                 if t.strip():
                                     self.on_token(t)
-                                if tok.get("is_final"):
-                                    self.final.append(t)
+                                (self.final if tok.get("is_final") else partial).append(t)
+                        self.partial = "".join(partial)
+                        if fin:
+                            self.fins += 1
+                            self._fin.set()
                         if msg.get("finished"):
                             break
                 finally:

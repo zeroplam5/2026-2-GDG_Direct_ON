@@ -78,7 +78,9 @@ class Config:
     stt_model: str = "gpt-4o-mini-transcribe"
     stt_language: str = "ko"
     stt_prompt: str = "건강기능식품 쇼핑몰 고객센터 전화 상담. 주문번호 같은 코드는 영문 대문자와 숫자로 적는다."  # practice hint
-    stt_timeout_s: float = 6.0
+    # 6 -> 12 (2026-11-21): Soniox real-time takes about as long as the speech itself, so batch STT
+    # of utterances over ~7.7 s timed out at 6 s (devui log, 31 turns). Timeouts: outcome=stt_timeout
+    stt_timeout_s: float = 12.0
     stt_hedge_ms: int = 1500               # send a 2nd identical request if the 1st is this slow (0 = off)
     whisper_model: str = "large-v3-turbo"  # faster_whisper provider only
     stt_device: str = "auto"               # faster_whisper: auto | cuda | cpu
@@ -106,6 +108,13 @@ class Config:
     soniox_endpoint_sensitivity: float = 0.3   # -1.0..1.0
     soniox_min_silence_ms: int = 300           # our own VAD silence required before acting on "<end>"
     soniox_fallback_silence_ms: int = 3000     # local silence limit if "<end>" never comes (then batch STT)
+    # transcribe while the customer speaks (opt-in, eou_mode=vad + stt_provider=soniox only): one Soniox
+    # stream per session gets every frame, the local VAD still decides the end of the utterance
+    # ("<end>" ignored). At the commit: {"type":"finalize"}, wait for "<fin>" at most stream_finalize_ms,
+    # then final + non-final text -> no speculative / batch STT. Stream not connected / failed ->
+    # speculative + batch STT as before for that turn.
+    stt_stream: bool = False
+    stream_finalize_ms: int = 700
 
     llm_provider: str = "openai_compat"    # openai_compat | scripted (test double, NOT an AI)
     llm_base_url: str = "https://api.openai.com/v1"
