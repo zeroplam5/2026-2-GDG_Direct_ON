@@ -348,3 +348,12 @@ body.demo .d-top { max-width: none; width: 100%; margin-left: 0; margin-right: 0
 .d-ghost:hover:not(:disabled) { color: var(--d-ink); }
 .d-ghost:disabled { opacity: .4; cursor: default; }
 .d-ghost:focus-visible { outline: 3px solid var(--d-accent-soft); outline-offset: 2px; }
+/* 기록 tab: brief / full switch and server-measured step durations */
+.d-seg { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--d-raised); margin-bottom: 22px; }
+.d-seg-b { font: 500 13.5px var(--d-font); padding: 6px 16px; border-radius: 999px; border: 0; background: none;
+  color: var(--d-muted); cursor: pointer; }
+.d-seg-b[aria-pressed="true"] { background: var(--d-surface); color: var(--d-ink); box-shadow: 0 0 0 1px var(--d-line); }
+.d-seg-b:focus-visible { outline: 3px solid var(--d-accent-soft); outline-offset: 2px; }
+#demoDurations:not(:empty) { margin-bottom: 26px; }
+#demoDurations .d-row { font-size: 14px; padding: 8px 0; }
+.d-tl-i.tl-minor .d-tl-k { color: var(--d-muted); font-size: 14px; }

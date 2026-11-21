@@ -1134,60 +1134,118 @@ function renderDemoCriteria(rec) {
 }
 
 // One readable line per step of the current turn. Times are seconds from the start of this turn's connection.
-function demoTimelineItems(t) {
+// brief: the main steps only (pauses folded into the end-of-utterance line). full: every step the server reported.
+let demoLogFullMode = true;
+try { demoLogFullMode = localStorage.getItem('devui.demoLog') !== 'brief'; } catch { /* storage blocked: default */ }
+function demoTimelineItems(t, full = demoLogFullMode) {
   const items = [];
   const add = (at, cls, k, v = '') => { if (at != null) items.push({ at, cls, k, v }); };
-  const q = (s) => `“${demoShort(s, 60)}”`;
-  // short pauses: the server transcribes early at every pause and drops it when the customer goes on.
-  // Shown once, as a count on the end-of-utterance line, instead of one line per pause.
+  const q = (s, n = 60) => `“${demoShort(s, n)}”`;
+  const tool = (n) => (TOOL_KO[n] || [n])[0];
   const pauses = t.dbg.filter((d) => d.msg.type === 'debug.vad' && d.msg.event === 'resume').length;
   const eouAt = (t.dbg.find((d) => d.msg.type === 'debug.eou') || {}).at;
   const lastEarly = [...t.dbg].reverse().find((d) => d.msg.type === 'debug.stt' && (eouAt == null || d.at <= eouAt));
+  let early = 0;
   for (const d of t.dbg) {
     const { msg: m, at } = d;
     switch (m.type) {
+      case 'debug.session':
+        if (full) add(at, 'minor', '통화 연결', `이전 대화 ${m.history_len || 0}개${m.caller ? ' · 발신자 정보 있음' : ''}`);
+        break;
       case 'debug.vad':
         if (m.event === 'speech_start') add(at, 'cust', '고객 말 시작');
+        else if (m.event === 'speculative_stt_start') { if (full) add(at, 'minor', '잠깐 멈춤 · 미리 받아쓰기 시작', m.silence_ms != null ? `조용한 시간 ${(m.silence_ms / 1000).toFixed(1)}초` : ''); }
+        else if (m.event === 'resume') { if (full) add(at, 'minor', `고객 말이 이어짐 (${m.resumes || ''}번째)`, '미리 받아쓴 것은 버려요'); }
         else if (m.event === 'resumed_after_commit') add(at, 'cust', '답 준비 중 고객 말이 이어짐', '준비하던 답을 버리고 다시 들어요');
         break;
-      case 'debug.stt': if (d === lastEarly) add(at, 'cust', '미리 받아쓰기', q(m.text)); break;
-      case 'debug.eou': add(at, 'cust', '말 끝 판단', [m.silence_ms != null ? `조용한 시간 ${(m.silence_ms / 1000).toFixed(1)}초` : '',
-        pauses ? `중간에 ${pauses}번 쉼` : ''].filter(Boolean).join(' · ')); break;
-      case 'debug.stt.final': add(at, 'cust', '받아쓰기 확정', m.text ? q(m.text) : '인식된 말 없음'); break;
-      case 'debug.prefetch.given': add(at, 'tool', '미리 조회한 결과 사용', (m.names || []).map((n) => (TOOL_KO[n] || [n])[0]).join(', ')); break;
+      case 'debug.stt':
+        early += 1;
+        if (full) add(at, d === lastEarly ? 'cust' : 'minor', `미리 받아쓰기 ${early}번째`, q(m.text));
+        else if (d === lastEarly) add(at, 'cust', '미리 받아쓰기', q(m.text));
+        break;
+      case 'debug.eou': {
+        const why = { complete_text: '문장이 끝났다고 판단', max_silence: '최대 대기 시간 도달', max_utterance: '말이 너무 길어 끊음',
+          soniox_end: 'Soniox 말 끝 신호' }[m.reason] || m.reason || '';
+        add(at, 'cust', '말 끝 판단', [why, m.silence_ms != null ? `조용한 시간 ${(m.silence_ms / 1000).toFixed(1)}초` : '',
+          !full && pauses ? `중간에 ${pauses}번 쉼` : '', full && m.reuse_speculative_stt ? '미리 받아쓴 결과 그대로 사용' : ''].filter(Boolean).join(' · '));
+        break;
+      }
+      case 'debug.stt.final': add(at, 'cust', '받아쓰기 확정', m.text ? q(m.text, 120) : '인식된 말 없음'); break;
+      case 'debug.prefetch.given': add(at, 'tool', '미리 조회한 결과 사용', (m.names || []).map(tool).join(', ')); break;
       case 'debug.llm.round_start': add(at, 'ai', m.round ? `답 다시 만들기 (${m.round + 1}회차)` : '답 만들기 시작'); break;
       case 'debug.llm.first_text': add(at, 'ai', '답 첫 글자'); break;
-      case 'debug.gate':
-        for (const d of m.decisions || []) {
-          if (!d.allowed) add(at, 'bad', `${(TOOL_KO[d.name] || [d.name])[0]} 보류`, GATE_REASONS[d.reason] || d.reason || '');
+      case 'debug.llm.round_end':
+        if (full) {
+          const calls = (m.tool_calls || []).map((c) => tool(c.name));
+          add(at, 'minor', `답 만들기 끝 (${(m.round || 0) + 1}회차)`, calls.length ? `함수 호출 결정: ${calls.join(', ')}` : (m.text ? q(m.text) : ''));
         }
         break;
-      case 'debug.tool.start': add(at, 'tool', `${(TOOL_KO[m.name] || [m.name])[0]} 요청`, demoArgs(m.arguments)); break;
+      case 'debug.gate':
+        for (const g of m.decisions || []) {
+          if (!g.allowed) add(at, 'bad', `${tool(g.name)} 보류`, `${GATE_REASONS[g.reason] || g.reason || ''} · 실행하지 않고 고객에게 먼저 확인`);
+          else if (full) add(at, 'minor', `${tool(g.name)} 관문 통과`, demoArgs(g.args));
+        }
+        break;
+      case 'debug.blocked_reply': if (full) add(at, 'minor', '보류 뒤 답 방식', BLOCKED_HOW[m.how] || m.how || ''); break;
+      case 'debug.tool.start': add(at, 'tool', `${tool(m.name)} 요청`, demoArgs(m.arguments)); break;
       case 'debug.tool.end': {
         const st = m.result && m.result.status;
-        const v = !m.sent ? '함수 서버로 보내지 않음' : `${RESULT_KO[st] || st || '완료'}${m.ms != null ? ` · ${(m.ms / 1000).toFixed(1)}초` : ''}`;
-        add(at, m.sent ? 'tool' : 'bad', `${(TOOL_KO[m.name] || [m.name])[0]} 결과`, v);
+        const v = !m.sent ? '함수 서버로 보내지 않음' : `${RESULT_KO[st] || st || '완료'}${m.ms != null ? ` · ${(m.ms / 1000).toFixed(2)}초 걸림` : ''}`;
+        add(at, m.sent ? 'tool' : 'bad', `${tool(m.name)} 결과`, v);
         break;
       }
       case 'debug.tool_ack': add(at, 'ai', '조회 안내 멘트', m.text ? q(m.text) : ''); break;
-      case 'debug.output_guard': add(at, 'bad', '출력 검사 표시', m.flag || ''); break;
+      case 'debug.output_guard': add(at, 'bad', '출력 검사 표시', [m.flag, full && m.sentence ? q(m.sentence) : ''].filter(Boolean).join(' · ')); break;
       case 'debug.reply_cancelled': add(at, 'bad', '준비하던 답 취소'); break;
       default: break;
     }
   }
+  // the server's own "first audio sent" / "turn.end sent" notes reach the page just after the audio and
+  // turn.end themselves, so they are folded into these two lines instead of listed out of order
+  const outcome = (t.dbg.find((d) => d.msg.type === 'debug.turn_end_sent') || {}).msg;
   add(t.firstVoicedRecvAt, 'good', '상담원 첫 소리');
-  add(t.turnEndAt, 'good', '응답 끝', t.agentTexts.length ? q(t.agentTexts.join(' ')) : '');
+  add(t.turnEndAt, outcome && outcome.outcome && outcome.outcome !== 'ok' ? 'bad' : 'good', '응답 끝',
+    [outcome && outcome.outcome && outcome.outcome !== 'ok' ? (OUTCOME_KO[outcome.outcome] || outcome.outcome) : '',
+      t.agentTexts.length ? q(t.agentTexts.join(' '), full ? 400 : 60) : ''].filter(Boolean).join(' · '));
   if (t.error) add(t.endAt || performance.now(), 'bad', '문제 발생', t.error);
   return items.sort((a, b) => a.at - b.at);
+}
+const OUTCOME_KO = { ok: '정상', not_heard: '못 알아들음 안내', budget_timeout: '시간 초과 안내', no_audio: '소리 없음' };
+
+// server-measured durations of the turn (debug.metrics), from the end of the customer's speech
+function demoDurations(t) {
+  const row = t && t.metrics && t.metrics.row;
+  if (!row) return null;
+  const s = (v) => (v == null ? null : `${(v / 1000).toFixed(2)}초`);
+  const tts = Array.isArray(row.tts_ms) && row.tts_ms.length ? row.tts_ms[0] : null;
+  return [
+    ['말 끝 판단까지', s(row.commit_ms_rel)],
+    ['받아쓰기에 걸린 시간', s(row.stt_ms)],
+    ['답 첫 글자까지', s(row.llm_first_text_ms_rel)],
+    ['첫 문장 음성 합성', s(tts)],
+    ['서버가 첫 소리 보낼 때까지', s(row.first_audio_ms_rel)],
+    ['응답 끝까지', s(row.turn_end_ms_rel)],
+  ].filter(([, v]) => v != null);
 }
 
 function renderDemoTimeline(t) {
   const list = $('demoTimeline');
   const items = t && t.debug ? demoTimelineItems(t) : [];
   $('demoLogCopy').disabled = !items.length;
-  const key = JSON.stringify([t ? t.sid : null, items.length, items.length ? items[items.length - 1].v : '']);
+  $('demoLogFull').setAttribute('aria-pressed', String(demoLogFullMode));
+  $('demoLogBrief').setAttribute('aria-pressed', String(!demoLogFullMode));
+  const durs = demoDurations(t);
+  const key = JSON.stringify([t ? t.sid : null, demoLogFullMode, items.length, items.length ? items[items.length - 1].v : '', !!durs]);
   if (key === demoTimelineKey) return;
   demoTimelineKey = key;
+  const dbox = $('demoDurations');
+  dbox.textContent = '';
+  if (durs && durs.length) {
+    dbox.appendChild(el('h2', 'd-h', '단계별 걸린 시간 · 고객 말이 끝난 뒤부터 (서버 측정)'));
+    const ul = el('ul', 'd-rows');
+    for (const [k, v] of durs) ul.appendChild(demoRow(k, v));
+    dbox.appendChild(ul);
+  }
   list.textContent = '';
   if (!items.length) {
     list.appendChild(el('li', 'd-tl-empty', t && !t.debug
@@ -1203,6 +1261,11 @@ function renderDemoTimeline(t) {
     li.append(el('span', 'd-tl-t', `${((it.at - t.t0) / 1000).toFixed(1)}초`), x);
     list.appendChild(li);
   }
+}
+function demoSetLogMode(full) {
+  demoLogFullMode = full;
+  try { localStorage.setItem('devui.demoLog', full ? 'full' : 'brief'); } catch { /* not kept */ }
+  renderDemoTimeline(T);
 }
 
 async function copyDemoTimeline() {
@@ -1534,6 +1597,8 @@ $('btnStart').onclick = () => { startTest().catch((e) => T && fail(T, `예상하
 $('demoBtn').onclick = () => { if (T && !T.finalized) stopTest(); else $('btnStart').onclick(); };
 $('demoNew').onclick = demoNewCall;
 $('demoLogCopy').onclick = copyDemoTimeline;
+$('demoLogFull').onclick = () => demoSetLogMode(true);
+$('demoLogBrief').onclick = () => demoSetLogMode(false);
 // side sheet tabs (WAI-ARIA tabs: click, or arrow keys while a tab has focus)
 const DEMO_TABS = ['demoTabWork', 'demoTabScore', 'demoTabLog'];
 function demoSelectTab(id, focus = false) {

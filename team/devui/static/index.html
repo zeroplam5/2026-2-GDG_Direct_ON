@@ -68,6 +68,11 @@
         <div id="demoCriteria"></div>
       </div>
       <div class="d-pane" id="demoPaneLog" role="tabpanel" aria-labelledby="demoTabLog" hidden>
+        <div class="d-seg" role="group" aria-label="기록 보기">
+          <button type="button" class="d-seg-b" id="demoLogBrief" aria-pressed="false">요약</button>
+          <button type="button" class="d-seg-b" id="demoLogFull" aria-pressed="true">전체</button>
+        </div>
+        <div id="demoDurations"></div>
         <ol id="demoTimeline" class="d-tl"></ol>
         <div class="d-tl-actions"><button id="demoLogCopy" class="d-ghost" type="button" disabled>기록 복사</button></div>
       </div>
