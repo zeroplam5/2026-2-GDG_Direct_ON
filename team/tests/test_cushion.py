@@ -35,6 +35,7 @@ def test_slow_turn_gets_the_cushion_once_before_the_answer(agent, two_mocks):
     cfg.cushion_after_s = 1.0
     cfg.scripted_delay_ms = 2500          # the answer is not ready 1 s after the end of speech
     cfg.send_transcript_event = True
+    cfg.topic_ack = False                 # its own tests: test_topic_ack.py
     (store, murl), _ = two_mocks
     r = _go(start, "SID-CUSH-SLOW", murl)
     said = _said(r)
@@ -52,6 +53,7 @@ def test_fast_turn_has_no_cushion(agent, two_mocks):
     cfg.cushion_after_s = 3.0
     cfg.scripted_delay_ms = 50
     cfg.send_transcript_event = True
+    cfg.topic_ack = False                 # its own tests: test_topic_ack.py
     (store, murl), _ = two_mocks
     r = _go(start, "SID-CUSH-FAST", murl)
     assert r["turn_end"] and not set(_said(r)) & set(PHRASES)
@@ -65,6 +67,7 @@ def test_off(agent, two_mocks):
     cfg.cushion_after_s = 1.0
     cfg.scripted_delay_ms = 2500
     cfg.send_transcript_event = True
+    cfg.topic_ack = False                 # its own tests: test_topic_ack.py
     (store, murl), _ = two_mocks
     r = _go(start, "SID-CUSH-OFF", murl)
     assert r["turn_end"] and not set(_said(r)) & set(PHRASES) and any("배송중" in s for s in _said(r))
@@ -77,6 +80,7 @@ def test_phrases_take_turns_across_calls(agent, two_mocks):
     cfg.cushion_after_s = 0.6
     cfg.scripted_delay_ms = 1500
     cfg.send_transcript_event = True
+    cfg.topic_ack = False                 # its own tests: test_topic_ack.py
     (store, murl), _ = two_mocks
 
     async def go():

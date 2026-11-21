@@ -67,9 +67,13 @@ class Config:
     # Speech that starts again (min_speech_ms) cancels the prepared reply (unless a function call
     # was already sent this turn) and both parts are endpointed again as one utterance.
     resume_before_audio: bool = False      # off by default
-    # cushion phrase: when nothing has been said yet this long after the end of the customer's speech
-    # (the official speed reference point), say a short pre-synthesized phrase once, then the answer.
-    # Only slow turns get it (the contest site discourages starting every reply with a filler).
+    # topic acknowledgement (topic_ack.py): right after the transcript, one pre-synthesized line naming
+    # what the customer asked about ("말씀하신 배송 상황 확인해 보겠습니다."), only under narrow conditions.
+    topic_ack: bool = True
+    # cushion phrase: when the customer has heard nothing for this long - from the end of their speech
+    # (the official speed reference point), or from the end of the last line said (topic_ack, tool_ack)
+    # - and the answer has not started, say a short pre-synthesized phrase once. Only slow turns get it
+    # (the contest site discourages starting every reply with a filler).
     cushion: bool = True
     cushion_after_s: float = 5.0
     # phrases separated by "|", used in turn across the whole server (each official case is a new

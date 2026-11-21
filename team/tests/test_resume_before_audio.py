@@ -55,6 +55,7 @@ def _setup(cfg, resume, llm_delay_ms=1500):
     cfg.resume_before_audio = resume
     cfg.scripted_delay_ms = llm_delay_ms   # slow "LLM": the reply is not ready when part 2 starts
     cfg.log_text = True                    # the test reads the transcript from the metrics row
+    cfg.topic_ack = False                  # any sound ends the listening; these tests are about the reply
 
 
 def _go(start, sid, tools_url):

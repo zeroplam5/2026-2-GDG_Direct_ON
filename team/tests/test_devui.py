@@ -42,7 +42,7 @@ def cfg(tmp_path):
     mapping.write_text(json.dumps(TEXTS, ensure_ascii=False), encoding="utf-8")
     return Config(port=0, vad="energy", stt_provider="fake", stt_fake_text=str(mapping),
                   llm_provider="scripted", tts_provider="tone", metrics_path=str(tmp_path / "m.jsonl"),
-                  tool_timeout_s=2.0)
+                  tool_timeout_s=2.0, topic_ack=False)   # the page's event order is checked without it
 
 
 async def _app(cfg):

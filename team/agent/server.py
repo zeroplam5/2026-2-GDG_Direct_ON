@@ -64,6 +64,13 @@ class App:
                 self.cached[k] = await self.tts.synth(self.phrases[k])
             except Exception as e:
                 log.warning("pre-synthesis of %r failed (%s); will synthesize on demand", k, type(e).__name__)
+        from .topic_ack import TOPICS
+        self.topic_acks: dict[str, tuple[str, bytes]] = {}   # key -> (line, pcm)
+        for key, (_, text) in (TOPICS.items() if self.cfg.topic_ack else []):
+            try:
+                self.topic_acks[key] = (text, await self.tts.synth(normalize_for_tts(text)))
+            except Exception as e:
+                log.warning("pre-synthesis of topic_ack %r failed (%s); that topic is skipped", key, type(e).__name__)
         for text in (self.cushion_texts if self.cfg.cushion else []):
             try:
                 self.cushions.append((text, await self.tts.synth(normalize_for_tts(text))))
