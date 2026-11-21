@@ -31,6 +31,7 @@ from .textutil import SentenceSplitter
 
 TEMPLATE_REASONS = {"no_consent", "not_asked", "not_stated"}
 # the customer asks to hear the last answer again: repeating it is then wanted
+GREETING_HEAD = re.compile(r"^\s*안녕하세요[,!.\s]*(?:고객님[,!.\s]*)?(?:[^.!?]{0,20}고객센터입니다[.!?]?\s*)?")
 REPEAT_ASK = re.compile(r"다시|한\s*번\s*더|뭐라고|뭐라구|못\s*들|안\s*들|네\s*\?|예\s*\?")
 
 
@@ -102,6 +103,8 @@ class Dialog:
         self._ack_i = 0  # rotate so the same phrase is not repeated turn after turn
         self.debug = None  # optional callable(kind, **data); set only by the devui test server
         self._earlier: list[str] = []  # sentences of the previous reply (output check: no word-for-word repeat)
+        self.greeting: str | None = None  # set by the session when the call has no earlier conversation
+        self._greeted_turn = False
 
     def _dbg(self, kind, **data):
         if self.debug:
@@ -211,6 +214,12 @@ class Dialog:
     def _checked(self, sentence: str, m: dict, said: list[str]) -> str:
         """Output check; returns "" when the sentence must not be said (e.g. already said)."""
         sentence = self._real(sentence)
+        if self._greeted_turn and sentence.lstrip().startswith("안녕하세요"):
+            # the code already greeted: the model's own greeting is left out (the rest of the sentence stays)
+            sentence = GREETING_HEAD.sub("", sentence, count=1)
+            if not sentence.strip():
+                m.setdefault("output_flags", []).append({"kind": "greeting_dropped", "action": "drop"})
+                return ""
         out, flag = self.guard.check(sentence, self._sources(), said, self._results(), policy=self.static,
                                      customer=self._customer_words(), earlier=self._earlier)
         if flag:
@@ -243,6 +252,13 @@ class Dialog:
         spoke = False
         said: list[str] = []  # sentences actually said this turn (after the output check)
         ahead = None  # queue of a reply prepared while a registration was running (write_answer_ahead)
+        self._greeted_turn = False
+        if self.greeting:  # first words of a call without earlier conversation: the greeting goes first
+            g, self.greeting = self.greeting, None
+            self._greeted_turn, m["greeting"] = True, True
+            said.append(g)
+            spoke = True
+            yield Ack(g)  # pre-synthesized; not an answer, so fallbacks still play if nothing follows
         for rnd in range(self.cfg.max_tool_rounds + 1):
             last_round = rnd == self.cfg.max_tool_rounds
             splitter = SentenceSplitter(early_min_chars=0 if spoke else self.cfg.first_chunk_min_chars)

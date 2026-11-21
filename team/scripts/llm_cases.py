@@ -151,6 +151,8 @@ async def run_case(c, cfg, llm, tools, db, static_template, phrases, rules):
         dlg.prefetch = Prefetch(kt, rules, c["history"], c.get("customer_profile"), max_calls=cfg.prefetch_max_calls)
         dlg.prefetch.session_start()
         await dlg.prefetch.settle(cfg.prefetch_settle_s)
+    if cfg.greeting_first and not c["history"]:  # as in the session: the code greets first
+        dlg.greeting = phrases.get("greeting")
     blocked = []  # gate decisions with their arguments (the session log keeps no payloads)
     dlg.debug = lambda kind, **d: blocked.extend(
         {"name": x["name"], "reason": x["reason"], "args": x["args"]} for x in d.get("decisions", []) if not x["allowed"]
@@ -159,7 +161,7 @@ async def run_case(c, cfg, llm, tools, db, static_template, phrases, rules):
     t0 = time.perf_counter()
     try:
         async for s in dlg.run_turn(c["customer_utterance"], m):
-            if first_ms is None:
+            if first_ms is None and not isinstance(s, Ack):  # LLM time: the greeting / ack is not counted
                 first_ms = (time.perf_counter() - t0) * 1000
             said.append(("(대기) " if isinstance(s, Ack) else "") + s)
         err = None

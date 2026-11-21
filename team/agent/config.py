@@ -161,6 +161,11 @@ class Config:
     # evidence field (근거 칸): write functions also carry, per value, the customer's words it came from;
     # the gate checks each quote against what the customer really said (team/agent/gate.py EVIDENCE_FIELD)
     gate_evidence: bool = True
+    # first greeting (phrases "greeting", pre-synthesized): said by the code right after the customer's
+    # first words when the call has no earlier conversation. OFF by default (2026-11-21): it is said right
+    # at the end-of-utterance decision, so a customer who only paused is talked over (speed 0 for that
+    # item) and resume_before_audio stops listening. When on, the model is told not to greet.
+    greeting_first: bool = False
     # the KULLM gateway masks phone / order numbers in user messages ("[PHONE]"): send them to the
     # model as slot names with a table in the system message (team/agent/number_slots.py)
     number_slots: bool = True

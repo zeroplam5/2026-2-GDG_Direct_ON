@@ -63,7 +63,8 @@ class App:
             except Exception as e:
                 log.warning("pre-synthesis of %r failed (%s); will synthesize on demand", k, type(e).__name__)
         from .dialog import ack_phrases
-        for text in (ack_phrases(self.phrases) if self.cfg.tool_ack else []):
+        greet = [self.phrases["greeting"]] if self.cfg.greeting_first and self.phrases.get("greeting") else []
+        for text in greet + (ack_phrases(self.phrases) if self.cfg.tool_ack else []):
             try:
                 self.cached_text[text] = await self.tts.synth(normalize_for_tts(text))
             except Exception as e:

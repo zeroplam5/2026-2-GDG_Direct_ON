@@ -1,6 +1,7 @@
 {
   "_comment": "OFFICIAL pack fixed phrases (2026-11-21). Pre-synthesized at startup. Wording is ours, not from the kit.",
   "brand_name": "하루온",
+  "greeting": "안녕하세요, 하루온 고객센터입니다.",
   "not_heard": "죄송합니다, 잘 듣지 못했습니다. 한 번 더 말씀해 주시겠어요?",
   "stt_timeout": "죄송합니다, 말씀을 다 듣지 못했어요. 한 번만 짧게 다시 말씀해 주시겠어요?",
   "delay_fallback": "확인이 지연되어 지금은 결과를 안내해 드리지 못했어요. 한 번 더 말씀해 주시면 다시 확인해 드릴게요.",

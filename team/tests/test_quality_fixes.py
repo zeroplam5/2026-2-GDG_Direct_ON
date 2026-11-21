@@ -140,3 +140,42 @@ def test_parallel_lookup_runs_first_and_blocks_return_in_transit():
 def test_parallel_lookup_then_return_when_delivered():
     tools, m = _turn("배송완료")
     assert tools.sent == ["get_order_info", "return_order"]      # lookup first, then the registration
+
+
+# ── greeting said by the code ───────────────────────────────────────────────
+class _GreetLLM:
+    def __init__(self, text):
+        self.text = text
+
+    async def stream(self, messages, tools=None, tool_choice="auto"):
+        yield ("text", self.text)
+
+
+def _greet_turn(text, greeting="안녕하세요, 하루온 고객센터입니다."):
+    from team.agent.dialog import Ack
+    dlg = Dialog(_GreetLLM(text), _Tools("배송중"), "지침", Config(prefetch=False), {"tool_round_limit": "x"})
+    dlg.greeting = greeting
+
+    async def go():
+        m = {}
+        out = [s async for s in dlg.run_turn("배송 언제 와요?", m)]
+        return m, out
+    m, out = asyncio.run(go())
+    return dlg, m, out, Ack
+
+
+def test_greeting_goes_first_and_the_models_greeting_is_left_out():
+    dlg, m, out, Ack = _greet_turn("안녕하세요, 하루온 고객센터입니다. 주문번호를 알려 주시겠어요? ")
+    assert isinstance(out[0], Ack) and out[0] == "안녕하세요, 하루온 고객센터입니다."
+    assert out[1:] == ["주문번호를 알려 주시겠어요?"]
+    assert m["greeting"] is True and dlg.greeting is None
+
+
+def test_greeting_prefix_inside_a_sentence_is_cut():
+    _, _, out, _ = _greet_turn("안녕하세요 고객님, 배송 상태를 확인해 드릴게요. ")
+    assert out[1:] == ["배송 상태를 확인해 드릴게요."]
+
+
+def test_no_greeting_when_not_set():
+    dlg, m, out, Ack = _greet_turn("주문번호를 알려 주시겠어요? ", greeting=None)
+    assert not any(isinstance(s, Ack) for s in out) and "greeting" not in m

@@ -121,6 +121,8 @@ class Session:
                              gate=Gate.from_config(self.cfg, start) if self.cfg.tool_gate else None,
                              context=policy.build_context(start))
         self.tools_ready = tools_task
+        if self.cfg.greeting_first and not policy.normalize_history(start.get("history")):
+            self.dialog.greeting = self.app.phrases.get("greeting")  # said first, pre-synthesized (server.warm)
         if self.cfg.prefetch:  # order / return lookups called ahead (prefetch.py), never registrations
             pf = Prefetch(self.tools, getattr(self.app, "rules", None), start.get("history"), start.get("caller"),
                           max_calls=self.cfg.prefetch_max_calls)
