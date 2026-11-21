@@ -31,7 +31,7 @@ import unicodedata
 from pathlib import Path
 
 from team.agent import policy
-from team.agent.config import Config
+from team.agent.config import OFFICIAL_PACK, PRACTICE_PATHS, Config, brand_path
 from team.agent.dialog import Dialog, plan_blocked_reply
 from team.agent.envfile import load_env_file
 from team.agent.gate import Gate
@@ -126,9 +126,17 @@ def build(case, a):
     return say, start
 
 
+def template_for(cfg):
+    """Pack prompt; with the official pack the brand material is appended like the server does."""
+    template = policy.load_prompt(cfg.prompt_path)
+    if Path(cfg.rules_path).resolve().parent == OFFICIAL_PACK.resolve():
+        template = policy.compose_prompt(template, policy.load_brand(brand_path(cfg)))
+    return template
+
+
 def messages_for(cfg, say, start):
     """Same messages the agent sends: static instructions, per-call context, customer turn."""
-    template = policy.load_prompt(cfg.prompt_path)
+    template = template_for(cfg)
     phrases = policy.load_phrases(cfg.phrases_path)
     rules = policy.load_rules(cfg.rules_path)
     flags = policy.handoff_flags(say, rules)
@@ -165,7 +173,7 @@ async def run_full(cfg, llm, say, start, gate_on):
     tools = LocalTools()
     phrases = policy.load_phrases(cfg.phrases_path)
     rules = policy.load_rules(cfg.rules_path)
-    dlg = Dialog(llm, tools, policy.build_static_prompt(policy.load_prompt(cfg.prompt_path), phrases, rules,
+    dlg = Dialog(llm, tools, policy.build_static_prompt(template_for(cfg), phrases, rules,
                                                        start.get("now")),
                  cfg, phrases, gate=Gate(rules, start) if gate_on else None, context=policy.build_context(start))
     m, said, t0, first = {}, [], time.perf_counter(), None
@@ -439,6 +447,10 @@ async def main():
 
     load_env_file(a.env_file)
     base = Config.from_env()
+    if not any(os.environ.get(k) for k in ("AGENT_PACK_DIR", "AGENT_RULES_PATH", "AGENT_PROMPT_PATH")):
+        # the built-in K / G cases are practice data (DEMO numbers, explicit read-back): practice pack.
+        # Official practice cases: team.scripts.llm_cases --kit <day kit>
+        base = dataclasses.replace(base, **PRACTICE_PATHS)
     tools_raw = load_tools()
     efforts = [e.strip() for e in a.effort.split(",") if e.strip()] or [base.llm_reasoning_effort]
     key_ok = bool(os.environ.get(base.llm_api_key_env or ""))

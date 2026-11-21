@@ -25,7 +25,7 @@ AGENT_PACK_DIR=team/agent/packs/official     # pack.json이 있는 폴더
 2. **지침 옮기기** (`*_system_prompt.md`): 응대 매뉴얼·브랜드 정보·말투 규칙을 사람 말로 옮긴다. "어떤 함수를 언제 부른다"는 문장은 여기 쓰지 않는다.
 3. **함수 규칙 채우기** (`*_rules.json`의 `functions`): 공식 함수마다 한 줄씩 적는다.
    - `kind`: 조회(`read`) 또는 접수·변경(`write`)
-   - `confirm` (접수·변경만): `explicit` = 직전에 값을 복창해 묻고 고객이 동의 / `request` = 고객이 값을 직접 말하며 요청하면 충분 / `implicit` = 다시 묻지 않음. 값이 대화에 있고 거절·머뭇거림만 없으면 통과 (공식 묶음 `team/agent/packs/official`의 접수 함수 전부) / `none` = 확인 없음
+   - `confirm` (접수·변경만): `explicit` = 직전에 값을 복창해 묻고 고객이 동의 / `request` = 고객이 값을 직접 말하며 요청하면 충분 / `context` = 다시 묻지 않음. 필요한 값이 있고 형식이 맞고 대화에 근거가 있으며(이번 턴에 처음 조회한 결과에만 있으면 안 됨), 거절·머뭇거림이 없고 요청(`intent`)이 대화에 있으면 통과 (공식 묶음 `team/agent/packs/official`의 접수 함수 전부) / `none` = 확인 없음
    - `value_args`: 대화에 실제로 나온 값이어야 하는 인자
    - `formats`: 인자 형식 (정규식, 공백·하이픈 제거 뒤 비교)
    - `arg_labels`: 인자의 한국어 이름 (프롬프트 문장에 쓰임)

@@ -24,7 +24,7 @@ def test_function_records_do_not_drop_the_history():
     assert [r for r, _ in turns] == ["customer", "agent", "customer", "tool_call", "tool_result", "agent"]
     assert "20990101-0000777" in turns[4][1] and turns[3][1].startswith("get_order_info ")
     text = policy.format_history(HISTORY)
-    assert "함수 결과: get_order_info" in text and "상담원: 주문번호 20990101-0000777" in text
+    assert "(함수 결과) get_order_info" in text and "상담원: 주문번호 20990101-0000777" in text
 
 
 def test_gate_uses_numbers_from_tool_results_and_the_last_agent_question():

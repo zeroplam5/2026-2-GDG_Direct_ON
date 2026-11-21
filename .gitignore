@@ -20,6 +20,16 @@ team/runs/**/*.log
 # local voice test UI timing log
 team/runs/devui_metrics.jsonl
 
-# 제출 압축에만 넣는 공식 자료 (대회 밖으로 옮기지 않음)
-official/
+# 제출 압축에만 넣는 공식 자료 (대회 밖으로 옮기지 않음). 루트의 official/ 만:
+# team/agent/packs/official 은 우리 공식 묶음이라 git에 넣는다.
+/official/
 submission*.zip
+
+# 키트의 data 폴더를 루트에 풀었을 때 (기본은 directon-2026-voice-cs/ 아래, 위에서 제외)
+data/brand/
+data/practice_cases.jsonl
+data/examples.json
+data/mock_db.json
+data/mock_db_test.json
+data/audio/practice/
+team/runs/llm_cases/

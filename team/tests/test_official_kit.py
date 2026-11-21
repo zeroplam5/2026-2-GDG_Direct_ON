@@ -1,6 +1,7 @@
-"""Changes for the official kit (directon-2026-voice-cs, 2026-11-21):
-1. history items customer / agent / tool_call / tool_result
-2. official pack: write functions use confirm=implicit (no read-back question)
+"""Changes for the official kit (directon-2026-voice-cs, 2026-11-21), on top of
+test_official_pack.py (which covers the gate's context mode in detail):
+1. history items customer / agent / tool_call / tool_result, an unclosed <link>
+2. official pack cases seen in the practice data (rules.json, confirm=context)
 3. mock server: SPEC.md matching rules (read / write / search, "invalid" / "not_found")
 
 The data below is made up in the kit's shapes; no official data is copied into the repo.
@@ -12,13 +13,15 @@ from pathlib import Path
 import pytest
 
 from team.agent import policy
+from team.agent.config import OFFICIAL_PACK
+from team.agent.dialog import _gate_note
 from team.agent.gate import CONFIRM_FIELD, Gate
 from team.agent.output_guard import OutputGuard
 from team.agent.policy import load_rules
 from team.mock.mock_api import MockStore
 
 REPO = Path(__file__).resolve().parents[2]
-OFFICIAL = load_rules(str(REPO / "team" / "agent" / "packs" / "official" / "official_rules.json"))
+OFFICIAL = load_rules(str(OFFICIAL_PACK / "rules.json"))
 KIT = REPO / "directon-2026-voice-cs"
 
 HISTORY = [
@@ -37,8 +40,8 @@ def test_history_keeps_every_item_and_tool_results():
     turns = policy.normalize_history(HISTORY)
     assert [r for r, _ in turns] == ["customer", "agent", "customer", "tool_call", "tool_result", "agent"]
     text = policy.format_history(HISTORY)
-    assert "함수 호출: get_order_info" in text and "20260928-0024417" in text
-    assert "https://" not in text and "(링크)" in text
+    assert "(함수 호출) get_order_info" in text and "20260928-0024417" in text
+    assert "https://" not in text and "(링크)" in text  # unclosed <link> too
     assert not text.lstrip().startswith("[")  # not the raw-JSON fallback
 
 
@@ -54,7 +57,7 @@ def test_unknown_items_are_skipped_not_the_whole_history():
     assert turns == [("customer", "안녕하세요")]
 
 
-# ── 2. official pack / gate ───────────────────────────────────────────────
+# ── 2. official pack / gate (context mode) ────────────────────────────────
 TOOLS = [{"type": "function", "function": {"name": n, "parameters": {"type": "object", "properties": {}}}}
          for n in ("get_order_info", "return_order", "request_callback", "search_products")]
 
@@ -65,16 +68,16 @@ def gate(history=None, caller=None):
     return g
 
 
-def test_implicit_write_functions_get_no_consent_field():
+def test_write_functions_get_no_consent_field():
     out = {s["function"]["name"]: s["function"] for s in Gate(OFFICIAL).augment(TOOLS)}
     assert CONFIRM_FIELD not in out["request_callback"]["parameters"]["properties"]
     assert CONFIRM_FIELD not in out["return_order"]["parameters"]["properties"]
 
 
 def test_callback_with_name_and_number_in_this_utterance_passes():
-    # practice P0044-02 style: the customer answers with number + name, no "네"
+    # practice P0044-02 style: the customer answers with number + name after asking for a call
     args = json.dumps({"phone_number": "010-5182-4529", "customer_name": "염다태"}, ensure_ascii=False)
-    d = gate().check("request_callback", args, "010 5182 4529 염다태")
+    d = gate([{"role": "customer", "text": "상담원이랑 통화하고 싶어요"}]).check("request_callback", args, "010 5182 4529 염다태")
     assert d.allowed, d.reason
 
 
@@ -95,15 +98,25 @@ def test_return_after_answering_full_or_part_passes_with_number_from_history_res
     assert d.allowed, d.reason
 
 
-def test_return_with_number_found_earlier_in_this_turn_passes():
+def test_return_with_number_found_only_earlier_in_this_turn_is_not_sent_yet():
+    # merge decision (2026-11-21): tell the customer what the lookup found, then register
     args = json.dumps({"order_number": "20261001-0060343", "reason": "수량 부족"}, ensure_ascii=False)
     g = gate()
     assert g.check("return_order", args, "전부 반품해 주세요").reason == "not_grounded"
-    earlier = json.dumps({"status": "ok", "data": {"orders": [{"주문번호": "20261001-0060343"}]}}, ensure_ascii=False)
-    assert g.check("return_order", args, "전부 반품해 주세요", None, earlier).allowed
+    fresh = json.dumps({"status": "ok", "data": {"orders": [{"주문번호": "20261001-0060343"}]}}, ensure_ascii=False)
+    assert g.check("return_order", args, "전부 반품해 주세요", turn_results=fresh).reason == "unconfirmed_lookup"
 
 
-def test_refusal_still_blocks_implicit_write():
+def test_a_blocked_calls_note_never_grounds_its_value():
+    note = {"role": "tool", "content": json.dumps({"status": "not_executed", "reason": "not_grounded",
+                                                   "message": "order_number 값(20261001-0060343)이 대화에 나온 적이 없습니다."},
+                                                  ensure_ascii=False)}
+    assert _gate_note(note)
+    assert not _gate_note({"role": "tool", "content": '{"status": "ok"}'})
+    assert not _gate_note({"role": "user", "content": '"not_executed"'})
+
+
+def test_refusal_still_blocks_a_write():
     args = json.dumps({"order_number": "20260928-0024417", "reason": "x"}, ensure_ascii=False)
     assert gate(HISTORY).check("return_order", args, "아니요 괜찮아요, 나중에 할게요").reason == "hesitation"
 
@@ -118,17 +131,13 @@ def test_search_query_needs_no_grounding():
     assert gate().check("search_products", args, "간에 좋다는 거 하루에 한 알 먹으면 돼요?").allowed
 
 
-def test_prompt_rule_text_for_implicit():
-    text = policy.function_rules_text(OFFICIAL)
-    assert "request_callback (접수·변경)" in text and "다시 복창해 묻지 말고 바로 호출" in text
-
-
 def test_business_hours_sentence_passes_time_check_but_a_booked_time_does_not():
     g = OutputGuard("log", strict="ids,time", rules=OFFICIAL)
+    done = '{"status": "ok", "message": "고객 정보 접수 성공"}'
     ok = "업무 시간인 오전 10시부터 오후 5시 사이에 순서대로 연락드리고 있습니다."
-    assert g.check(ok, ok, results='{"status": "ok", "message": "고객 정보 접수 성공"}')[0] == ok
+    assert g.check(ok, ok, results=done) == (ok, None)
     bad = "내일 오전 열 시에 연락드리겠습니다."
-    out, flag = g.check(bad, bad, results='{"status": "ok", "message": "고객 정보 접수 성공"}')
+    out, flag = g.check(bad, bad, results=done)
     assert out != bad and flag["kind"] == "unconfirmed_time"
 
 

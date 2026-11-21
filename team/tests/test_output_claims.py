@@ -4,13 +4,13 @@ import asyncio
 import json
 
 from team.agent import policy
-from team.agent.config import Config
+from team.agent.config import Config, practice_config
 from team.agent.dialog import Dialog
 from team.agent.gate import CONFIRM_FIELD, Gate
 from team.agent.output_guard import OutputGuard
 from team.agent.providers.llm import ToolCall
 
-CFG = Config()
+CFG = practice_config()
 RULES = policy.load_rules(CFG.rules_path)
 PHRASES = policy.load_phrases(CFG.phrases_path)
 CALLER = {"name": "데모 고객", "phone": "01000001234", "email": None}

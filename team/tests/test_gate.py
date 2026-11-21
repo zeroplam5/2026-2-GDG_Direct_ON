@@ -6,13 +6,13 @@ judged by a hybrid check (the model quotes the consent, the code verifies it).
 import asyncio
 import json
 
-from team.agent.config import Config
+from team.agent.config import Config, practice_config
 from team.agent.dialog import Dialog
 from team.agent.gate import CONFIRM_FIELD, Gate, normalize_text
 from team.agent.policy import load_rules
 from team.agent.providers.llm import ToolCall
 
-POLICY = load_rules(Config().rules_path)
+POLICY = load_rules(practice_config().rules_path)
 CALLER = {"name": "연습 고객", "phone": "01000001234", "email": None}
 ASK = "지금 거신 번호 01000001234로 내일 연락드려도 될까요?"
 TOOLS = [

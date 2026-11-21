@@ -4,7 +4,8 @@
 
 Zip contents
   * every COMMITTED file of HEAD (git archive) - uncommitted changes are NOT included (warned)
-  * official/tools.json, official/mock_db.json  from the official kit (not in the repository:
+  * official/tools.json, official/mock_db.json, official/brand/{scenarios.md, information.json,
+    style.json}  from the official kit (not in the repository:
     contest data must not leave the event; it goes only into the zip handed to the organisers)
   * .env (API keys) if present - warned if missing
   top level: start_server.sh, start_mock.sh, requirements.txt (README 7장)
@@ -82,6 +83,13 @@ def build(a) -> Path:
     with zipfile.ZipFile(out, "a", zipfile.ZIP_DEFLATED) as z:
         z.write(tools, "official/tools.json")
         z.write(db, "official/mock_db.json")
+        # brand material for the prompt (config.brand_path finds it at official/brand)
+        brand = kit / "data" / "brand"
+        for name in ("scenarios.md", "information.json", "style.json"):
+            if (brand / name).is_file():
+                z.write(brand / name, f"official/brand/{name}")
+            else:
+                print(f"주의: 공식 자료에 {brand / name} 가 없어 지침에 브랜드 자료가 빠집니다", file=sys.stderr)
         if env.exists():
             z.write(env, ".env")
             for w in env_warnings(env):

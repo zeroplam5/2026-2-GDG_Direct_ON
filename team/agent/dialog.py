@@ -55,6 +55,12 @@ def plan_blocked_reply(text: str, calls, decisions, gate, rules: dict) -> tuple[
     return "model", None
 
 
+def _gate_note(msg: dict) -> bool:
+    """A blocked call's "not_executed" note: it quotes the rejected value, so it must never
+    count as the value having been said or found (gate grounding)."""
+    return msg.get("role") == "tool" and '"not_executed"' in str(msg.get("content"))
+
+
 class Dialog:
     def __init__(self, llm, tools, system_prompt: str, cfg, phrases: dict, gate=None, context: str | None = None):
         self.llm = llm
@@ -71,6 +77,9 @@ class Dialog:
         # reply twice in 5 of 6 text answers. Doubling also happens with one message, less
         # clearly measured, so repeated sentences are dropped by the output check as well.)
         content = system_prompt + ("\n\n" + context if context else "")
+        self.static = system_prompt  # our instructions + brand material: what policy states (output check)
+        # the customer's words in the session.start history ("고객: …" lines of the context)
+        self.customer_history = "\n".join(ln[3:] for ln in (context or "").splitlines() if ln.startswith("고객:"))
         self.messages: list[dict] = [{"role": "system", "content": content}]
         self._acks = ack_phrases(phrases)
         self._ack_i = 0  # rotate so the same phrase is not repeated turn after turn
@@ -96,9 +105,25 @@ class Dialog:
         """Function results of this session only (what was actually done / found)."""
         return "\n".join(str(msg.get("content") or "") for msg in self.messages if msg["role"] == "tool")
 
+    def _prior(self, turn_start: int) -> str:
+        """Earlier turns of this session (customer words, replies, function results). Empty for
+        the evaluator, which sends one utterance per connection with the history in session.start."""
+        return "\n".join(str(msg.get("content") or "") for msg in self.messages[1:turn_start] if not _gate_note(msg))
+
+    def _turn_results(self, turn_start: int) -> str:
+        """Function results of the current turn so far."""
+        return "\n".join(str(msg.get("content") or "") for msg in self.messages[turn_start:]
+                         if msg["role"] == "tool" and not _gate_note(msg))
+
+    def _customer_words(self) -> str:
+        """Everything the customer said: session.start history + this session's turns."""
+        return "\n".join([self.customer_history] + [str(msg.get("content") or "") for msg in self.messages
+                                                    if msg["role"] == "user"])
+
     def _checked(self, sentence: str, m: dict, said: list[str]) -> str:
         """Output check; returns "" when the sentence must not be said (e.g. already said)."""
-        out, flag = self.guard.check(sentence, self._sources(), said, self._results())
+        out, flag = self.guard.check(sentence, self._sources(), said, self._results(), policy=self.static,
+                                     customer=self._customer_words())
         if flag:
             m.setdefault("output_flags", []).append(flag)
             self._dbg("output_guard", sentence=sentence, flag=flag)
@@ -162,11 +187,9 @@ class Dialog:
             decisions = [None] * len(calls)
             if self.gate:
                 last_agent = self._last_agent_text(turn_start)
-                # real results of earlier rounds count as "in the conversation"; the gate's own
-                # "not_executed" notes quote the rejected value and must not ground it
-                earlier = "\n".join(str(msg.get("content") or "") for msg in self.messages
-                                    if msg["role"] == "tool" and '"not_executed"' not in str(msg.get("content")))
-                decisions = [self.gate.check(c.name, c.arguments, user_text, last_agent, earlier) for c in calls]
+                prior, fresh = self._prior(turn_start), self._turn_results(turn_start)
+                decisions = [self.gate.check(c.name, c.arguments, user_text, last_agent, prior=prior, turn_results=fresh)
+                             for c in calls]
                 m["gate"].extend(d.log_entry(c.name) for c, d in zip(calls, decisions))
                 self._dbg("gate", decisions=[{"name": c.name, "allowed": d.allowed, "reason": d.reason,
                                               "args": d.args, "message": d.message}

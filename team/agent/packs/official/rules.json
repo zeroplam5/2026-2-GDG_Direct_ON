@@ -1,0 +1,55 @@
+{
+  "_comment": "OFFICIAL rules (2026-11-21 day kit, data/brand/tools.json: 8 functions). Every rule the CODE checks lives here; prompt.md keeps prose only. functions/_default = pre-execution gate (team/agent/gate.py) and the generated [함수 실행 규칙] prompt section. kind read = lookup (no consent), write = registers something. confirm 'context' = the official call logs register a request in the same turn the customer gives the value or the choice: the gate checks values are present and grounded in the conversation (not only in a lookup made this turn), no refusal / hesitation, and the request ('intent' regex) in the conversation. value_args = arguments that must be grounded ('a.b' walks into lists); require_any = at least one of them. formats = regex on the value with separators removed, write functions only (official order numbers are YYYYMMDD-NNNNNNN = 8+7 digits, item codes add 2 digits): a lookup with an odd number just returns not_found, a registration with one is never sent. handoff = hand-off signal keywords (memo only), handoff_note = the memo's instruction. consent = refusal / hesitation words. output_check = word patterns of the output check's unconfirmed-time rule. Regex values are Python re syntax.",
+
+  "arg_labels": {
+    "order_id": "주문번호", "order_number": "주문번호", "buyer_cellphone": "주문자 전화번호",
+    "customer_phone_number": "전화번호", "phone_number": "전화번호", "customer_name": "고객 이름",
+    "return_items.order_item_code": "상세주문번호"
+  },
+
+  "_default": {"kind": "write", "confirm": "context"},
+  "functions": {
+    "get_order_info": {"kind": "read", "value_args": ["order_id", "buyer_cellphone"],
+                       "require_any": ["order_id", "buyer_cellphone"]},
+    "get_return_info": {"kind": "read", "value_args": ["customer_phone_number"],
+                        "require_any": ["customer_phone_number"]},
+    "search_products": {"kind": "read", "value_args": []},
+    "cancel_order": {"kind": "write", "confirm": "context", "value_args": ["order_id"],
+                     "formats": {"order_id": "[0-9]{15}"}, "intent": "취소"},
+    "return_order": {"kind": "write", "confirm": "context", "value_args": ["order_number"],
+                     "formats": {"order_number": "[0-9]{15}"}, "intent": "반품|환불|회수|반송"},
+    "return_order_item": {"kind": "write", "confirm": "context", "value_args": ["return_items.order_item_code"],
+                          "formats": {"return_items.order_item_code": "[0-9]{17}"}, "intent": "반품|환불|회수|반송"},
+    "exchange_order": {"kind": "write", "confirm": "context", "value_args": ["order_number"],
+                       "formats": {"order_number": "[0-9]{15}"}, "intent": "교환|바꿔|바꾸"},
+    "request_callback": {"kind": "write", "confirm": "context", "value_args": ["phone_number", "customer_name"],
+                         "formats": {"phone_number": "0[0-9]{8,10}"},
+                         "intent": "전화|통화|연락|콜백|상담원|상담사|주문|구매"}
+  },
+
+  "handoff": {
+    "human_request": {"label": "사람 상담원 요청",
+                      "pattern": "상담원|상담사|사람(이랑|과|하고|한테)|직원(이랑|과|하고|한테)|연결해\\s*주"},
+    "health_issue": {"label": "건강 이상·복용 문의 가능성",
+                     "pattern": "부작용|두드러기|가려|구토|토했|설사|어지러|호흡|숨이|응급|병원|발진|복통|이상\\s*반응|복용\\s*중|먹고\\s*있는\\s*약|임신|수유"},
+    "complaint": {"label": "불만 표현", "pattern": "화가|짜증|어이가|신고|소비자원|고소"}
+  },
+  "handoff_note": "시나리오에 따라 상담원에게 넘길 상황인지 판단하고, 넘길 때는 상담원이 이어서 도와드린다고 안내할 것. 건강 관련 판단은 단정하지 말 것.",
+
+  "consent": {
+    "negative": "아니요|아뇨|아니에요|아닙니다|아니라|잠깐|잠시만|생각(?:해|좀|을|해\\s*볼)|나중에|보류|하지\\s*마|필요\\s*없|안\\s*할게|안\\s*하려|취소\\s*안",
+    "affirmative": "^\\s*(?:네|예|응|맞|그래|그럼|좋)|해\\s*주세요|해\\s*줘|해\\s*주시|부탁|진행|접수해|그렇게|그걸로|좋아요|좋습니다|맞아요|맞습니다",
+    "puzzled": "^\\s*(?:네|예|뭐|뭐라고|네에)\\s*요?\\s*\\?\\s*$",
+    "question": "\\?|까요|나요|가요|실래요|시겠어요|시겠습니까|맞으세요|맞습니까|맞나요|될까요|드릴까요"
+  },
+
+  "output_check": {
+    "_comment": "Output check 'time' (team/agent/output_guard.py): a non-question, non-negated sentence with a time word AND a contact/booking word is replaced unless a function result carries a time value, or every time word is stated by the brand material itself (relative days such as 내일 never count as stated). policy = a sentence stating the brand's general contact practice (EX07 '업무 시간인 오전 10시부터 … 순서대로 연락드리고') is not a booked time and passes.",
+    "time": "내일|모레|글피|오늘|오전|오후|아침|저녁|점심|요일|주말|다음\\s*주|\\d+\\s*시(?!간)|(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|열한|열두)\\s*시(?!간)",
+    "claim": "접수|예약|확정|잡아\\s*(?:두|드)|해\\s*두었|해\\s*뒀|연락\\s*드리|전화\\s*드리|연락\\s*드릴|전화\\s*드릴|연락드리|전화드리|연락드릴|전화드릴|콜백|전달|반영|등록|메모|기록|남겨\\s*(?:두|드)",
+    "negation": "않|못\\s*하|못\\s*했|없|불가|어렵|드릴\\s*수\\s*없",
+    "result_time": "\\d{1,2}:\\d{2}|\\d{4}-\\d{1,2}-\\d{1,2}|\\d+\\s*시|오전|오후|내일|모레|\\bAM\\b|\\bPM\\b|T\\d{2}:",
+    "relative_day": "오늘|내일|모레|글피|요일|주말|다음\\s*주",
+    "policy": "업무\\s*시간|영업\\s*시간|운영\\s*시간|순서대로"
+  }
+}
