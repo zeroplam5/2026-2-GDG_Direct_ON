@@ -405,6 +405,10 @@ function onDebug(t, msg, at) {
       t.guardFlags.push(msg);
       renderTools(t);
       break;
+    case 'debug.topic_ack':
+      t.topicAck = msg;
+      renderTools(t);
+      break;
     case 'debug.cushion':
       t.cushion = msg;
       renderTools(t);
@@ -1033,6 +1037,7 @@ function renderDemo() {
   // work record of this turn
   const box = $('demoTools');
   box.textContent = '';
+  if (t && t.topicAck) box.appendChild(el('p', 'd-none', `고객 말을 받아 적자마자 "${t.topicAck.text}"라고 먼저 확인했어요.`));
   if (t && t.cushion) box.appendChild(el('p', 'd-none', `답이 늦어져 "${t.cushion.text}"라고 먼저 말했어요.`));
   if (t && t.toolAck) box.appendChild(el('p', 'd-none', `조회하는 동안 "${t.toolAck.text}"라고 먼저 안내했어요.`));
   for (const g of (t ? t.gate : [])) {
@@ -1201,6 +1206,7 @@ function demoTimelineItems(t, full = demoLogFullMode) {
         break;
       }
       case 'debug.tool_ack': add(at, 'ai', '조회 안내 멘트', m.text ? q(m.text) : ''); break;
+      case 'debug.topic_ack': add(at, 'ai', '확인 멘트', m.text ? q(m.text) : ''); break;
       case 'debug.cushion': add(at, 'ai', '쿠션어', [m.text ? q(m.text) : '', m.after_s != null ? `고객 말이 끝나고 ${Number(m.after_s).toFixed(1)}초 동안 답이 없어서` : ''].filter(Boolean).join(' · ')); break;
       case 'debug.output_guard': add(at, 'bad', '출력 검사 표시', [m.flag, full && m.sentence ? q(m.sentence) : ''].filter(Boolean).join(' · ')); break;
       case 'debug.reply_cancelled': add(at, 'bad', '준비하던 답 취소'); break;
