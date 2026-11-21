@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 
 from . import policy
@@ -29,6 +30,8 @@ from .output_guard import OutputGuard
 from .textutil import SentenceSplitter
 
 TEMPLATE_REASONS = {"no_consent", "not_asked", "not_stated"}
+# the customer asks to hear the last answer again: repeating it is then wanted
+REPEAT_ASK = re.compile(r"다시|한\s*번\s*더|뭐라고|뭐라구|못\s*들|안\s*들|네\s*\?|예\s*\?")
 
 
 class Ack(str):
@@ -98,6 +101,7 @@ class Dialog:
         self._acks = ack_phrases(phrases)
         self._ack_i = 0  # rotate so the same phrase is not repeated turn after turn
         self.debug = None  # optional callable(kind, **data); set only by the devui test server
+        self._earlier: list[str] = []  # sentences of the previous reply (output check: no word-for-word repeat)
 
     def _dbg(self, kind, **data):
         if self.debug:
@@ -208,7 +212,7 @@ class Dialog:
         """Output check; returns "" when the sentence must not be said (e.g. already said)."""
         sentence = self._real(sentence)
         out, flag = self.guard.check(sentence, self._sources(), said, self._results(), policy=self.static,
-                                     customer=self._customer_words())
+                                     customer=self._customer_words(), earlier=self._earlier)
         if flag:
             m.setdefault("output_flags", []).append(flag)
             self._dbg("output_guard", sentence=sentence, flag=flag)
@@ -220,6 +224,9 @@ class Dialog:
         flags = policy.handoff_flags(user_text, self.rules)
         m["handoff_flags"] = flags
         turn_start = len(self.messages)
+        # sentences of the previous reply: not said again word for word, unless the customer asks to hear it again
+        prev = "" if REPEAT_ASK.search(user_text or "") else (self._last_agent_text(turn_start) or "")
+        self._earlier = [s for s in re.split(r"(?<=[.!?])\s+", prev) if s.strip()]
         self.messages.append({"role": "user", "content": policy.user_message(user_text, flags, self.rules)})
         if self.prefetch:
             self.prefetch.turn_start(user_text)  # numbers in the customer's words: lookups start now
@@ -293,6 +300,7 @@ class Dialog:
                 decisions = [self.gate.check(c.name, c.arguments, user_text, last_agent, prior=prior, turn_results=fresh,
                                              customer=said_by_customer)
                              for c in calls]
+                gate_base = len(m["gate"])
                 m["gate"].extend(d.log_entry(c.name) for c, d in zip(calls, decisions))
                 self._dbg("gate", decisions=[{"name": c.name, "allowed": d.allowed, "reason": d.reason,
                                               "args": d.args, "message": d.message}
@@ -336,7 +344,28 @@ class Dialog:
                         return got
                 return await self.tools.call(c.name, args_json)
 
-            results = await asyncio.gather(*(run(c, d) for c, d in zip(calls, decisions)))
+            # a lookup and a registration in the same round (seen 2026-11-21: order lookup + return_order
+            # for an order in transit): run the lookups first, then check the registration again with
+            # their results (delivery status rules), so it is never sent before the status is known
+            reads = [i for i, c in enumerate(calls) if self.gate and self.gate.spec(c.name).get("kind") != "write"]
+            ruled = [i for i, c in enumerate(calls) if self.gate and i not in reads and decisions[i] is not None
+                     and decisions[i].allowed and self.gate.has_status_rule(c.name)]
+            if reads and ruled:
+                results = [None] * len(calls)
+                for i, r in zip(reads, await asyncio.gather(*(run(calls[i], decisions[i]) for i in reads))):
+                    results[i] = r
+                looked = "\n".join([fresh, *(json.dumps(results[i], ensure_ascii=False) for i in reads)])
+                for i in ruled:
+                    d2 = self.gate.check(calls[i].name, calls[i].arguments, user_text, last_agent, prior=prior,
+                                         turn_results=looked, customer=said_by_customer)
+                    if not d2.allowed:
+                        decisions[i] = d2
+                        m["gate"][gate_base + i] = d2.log_entry(calls[i].name)
+                rest = [i for i in range(len(calls)) if i not in reads]
+                for i, r in zip(rest, await asyncio.gather(*(run(calls[i], decisions[i]) for i in rest))):
+                    results[i] = r
+            else:
+                results = await asyncio.gather(*(run(c, d) for c, d in zip(calls, decisions)))
             m["tool_calls"].append({"round": rnd, "ms": round((time.perf_counter() - t_tools) * 1000, 1),
                                     "calls": [{"name": c.name, "status": r.get("status")} for c, r in zip(calls, results)]})
             for c, r in zip(calls, results):

@@ -143,13 +143,19 @@ class OutputGuard:
         return ",".join(tokens), bool(self.question.search(sentence))
 
     def check(self, sentence: str, sources: str, spoken=(), results: str = "", policy: str = "",
-              customer: str | None = None) -> tuple[str, dict | None]:
+              customer: str | None = None, earlier=()) -> tuple[str, dict | None]:
         """Returns (sentence to speak, flag or None). An empty sentence means: say nothing.
         sources = everything the model was given or told; results = function results only;
         policy = our instructions + brand material (what the brand itself states);
-        customer = the customer's own words (history + this session), None = not known."""
+        customer = the customer's own words (history + this session), None = not known;
+        earlier = sentences of the agent's previous reply (empty when the customer asked to hear it again)."""
         if self.mode == "off" or not sentence.strip():
             return sentence, None
+        # the same sentence as in the previous reply (seen 2026-11-21: a courier note said again word
+        # for word): dropped, but only after something was said this turn, so the turn is never silent
+        key0 = _key(sentence)
+        if spoken and len(key0) >= 12 and any(_key(s) == key0 for s in earlier):
+            return "", {"kind": "repeated_from_last_turn", "action": "drop"}
         if CODE_CALL.search(sentence):  # strip the code, check what is left like any sentence
             rest = re.sub(r"\s+", " ", CODE_CALL.sub(" ", sentence)).strip()
             code_flag = {"kind": "code_text", "action": "strip"}

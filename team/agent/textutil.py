@@ -125,6 +125,13 @@ def normalize_for_tts(text: str) -> str:
         s = m.group(0)
         return " ".join(_DIGIT_KO[int(c)] for c in s)
 
+    # phone numbers in groups ("010-9999-0001", "02-000-0000"): every group digit by digit, a short
+    # pause between groups, so "9999" is never read as "구천구백구십구"
+    def spell(s):
+        return " ".join(_DIGIT_KO[int(c)] for c in s)
+
+    t = re.sub(r"(?<!\d)0\d{1,2}[-\s]\d{3,4}[-\s]\d{4}(?!\d)",
+               lambda m: ", ".join(spell(g) for g in re.split(r"[-\s]", m.group(0))), t)
     t = re.sub(r"\d{5,}", digits, t)
     t = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", t)  # DEMO1001 -> DEMO 1001
     t = re.sub(r"(?<=[A-Za-z] )\d{2,4}\b", digits, t)

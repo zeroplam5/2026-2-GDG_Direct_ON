@@ -101,7 +101,27 @@ MESSAGES = {
                           "고객이 말한 값을 그대로 쓰고, 분명하지 않으면 한 번 더 여쭤보세요."),
     "corrected": ("실행하지 않았습니다: 고객이 {label} 값({value})을 뒤에서 다른 값으로 정정했습니다. "
                   "정정한 값을 쓰세요."),
+    "wrong_status": ("실행하지 않았습니다: 조회 결과 이 주문의 배송상태가 '{status}'입니다. {note}. "
+                     "접수했다고 말하지 말고 이 내용을 고객에게 안내하세요."),
 }
+# one order (or order item) of a lookup result: flat object with the number and the delivery status
+_ORDER_OBJ = re.compile(r"\{[^{}]*\}")
+_ORDER_NO = re.compile(r'"(?:주문번호|상세주문번호)"\s*:\s*"([^"]+)"')
+_ORDER_STATUS = re.compile(r'"배송상태"\s*:\s*"([^"]+)"')
+
+
+def order_statuses(number: str, text: str) -> set[str]:
+    """Delivery statuses that lookup results in `text` give for this order / item number."""
+    want = re.sub(r"\D", "", str(number or ""))
+    out = set()
+    if not want:
+        return out
+    for obj in _ORDER_OBJ.finditer(str(text or "")):
+        s = obj.group(0)
+        st = _ORDER_STATUS.search(s)
+        if st and any(re.sub(r"\D", "", n) == want for n in _ORDER_NO.findall(s)):
+            out.add(st.group(1).strip())
+    return out
 
 # agent turns that are system notices, not questions ("…상담이 자동으로 종료됩니다")
 NOTICE = re.compile(r"자동으로\s*종료|자동\s*종료|상담이\s*종료")
@@ -267,6 +287,9 @@ class Gate:
             out.append(s2)
         return out
 
+    def has_status_rule(self, name: str) -> bool:
+        return name in (self.table.get("status_rules") or {})
+
     def _label(self, arg: str) -> str:
         labels = self.table.get("arg_labels") or {}
         return labels.get(arg) or {"reason": "사유", "pickup_address": "회수지 주소",
@@ -408,8 +431,10 @@ class Gate:
                 return block("not_grounded", arg=arg, value=v)
         ev_status = None
         if is_write and self.evidence:
-            said = customer if customer is not None else "\n".join(
-                [*(t for r, t in self.history if r == "customer"), utterance or ""])
+            # the session.start history's customer lines are always included (the caller's `customer`
+            # may come from a context built elsewhere), then this session's words in order
+            said = "\n".join([*(t for r, t in self.history if r == "customer"),
+                              customer if customer is not None else (utterance or "")])
             bad, ev_status = self.check_evidence(args, evidence, all_value_args, said)
             if bad:
                 return block(ev_status, label=self._label(bad), value=args.get(bad))
@@ -422,6 +447,15 @@ class Gate:
             intent = sp.get("intent")
             if intent and not re.search(intent, self._intent_text(utterance, prior)):
                 return block("no_intent")
+            # 3. delivery status (rules "status_rules"): a registration the brand material rules out for the
+            # status the lookup returned ("배송중" -> return only after delivery). No lookup result: no check.
+            rule = (self.table.get("status_rules") or {}).get(name) if is_write else None
+            if rule:
+                looked = "\n".join([" ".join(t for r, t in self.history if r == "tool_result"), turn_results or "", prior or ""])
+                for v in real(rule.get("arg", "")):
+                    st = order_statuses(v, looked)
+                    if st and st <= set(rule.get("block") or []):
+                        return block("wrong_status", status="·".join(sorted(st)), note=rule.get("note", ""))
             return Decision(True, args)
         if not self.needs_consent(name):
             return Decision(True, args)
