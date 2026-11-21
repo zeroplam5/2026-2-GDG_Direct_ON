@@ -14,8 +14,10 @@ test('case without a function call: first sound only', () => {
 });
 
 test('case with a function call: average of first sound and answer after the result', () => {
-  // filler at 1.2 s (100) but the answer comes 2.8 s after the result (70) -> 85
-  assert.equal(caseSpeed({ firstSound: 1.2, afterTool: 2.8, toolCalled: true }).speed, 85);
+  // filler at 1.2 s (100) but the answer comes 4.8 s after the result (70 on the after-lookup table) -> 85
+  assert.equal(caseSpeed({ firstSound: 1.2, afterTool: 4.8, toolCalled: true }).speed, 85);
+  // the after-lookup table is more lenient: 3.5 s after the result is still 100 (first-sound table: 60)
+  assert.equal(caseSpeed({ firstSound: 1.2, afterTool: 3.5, toolCalled: true }).after, 100);
   // nothing said after the result -> that half is 0
   const r = caseSpeed({ firstSound: 1.2, afterTool: null, toolCalled: true });
   assert.equal(r.speed, 50);

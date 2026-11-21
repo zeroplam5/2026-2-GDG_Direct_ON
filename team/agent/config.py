@@ -63,6 +63,10 @@ class Config:
     complete_silence_ms: int = 1100        # commit if transcript looks complete (measured sentence gaps: 0.6-0.9 s)
     max_silence_ms: int = 1800             # commit regardless of transcript after this much silence
     max_utterance_ms: int = 30000          # force commit for very long speech
+    # keep listening after a commit until the first voiced audio is sent (eou_mode=vad only).
+    # Speech that starts again (min_speech_ms) cancels the prepared reply (unless a function call
+    # was already sent this turn) and both parts are endpointed again as one utterance.
+    resume_before_audio: bool = False      # off by default
 
     # ── providers ──────────────────────────────────────────────────────────
     # Defaults = models fixed for the event: gpt-4o-mini-transcribe / gpt-4.1 (or gpt-5, gpt-4o-mini) /
