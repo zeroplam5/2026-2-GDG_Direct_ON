@@ -1058,6 +1058,166 @@ function renderDemo() {
   if (rec && rec.toolCalled) {
     sp.appendChild(demoMetric('조회 뒤 답', rec.afterTool, rec.after, null, 8.5, [[3.5, '3.5초'], [5, '5초'], [8, '8초']]));
   }
+  renderDemoCriteria(rec);
+  renderDemoTimeline(t);
+}
+
+// ── folded panels (demo only): scoring rules with this call's results, and a timeline of the turn ──
+// Rebuilt only when what they show changes (renderDemo runs on every tick), so an open panel keeps its
+// scroll position and text selection.
+let demoCriteriaKey = null;
+let demoTimelineKey = null;
+const secTxt = (v) => (v == null ? '—' : `${v.toFixed(2)}초`);
+
+function demoSpeedTable(title, note, table, hitSec) {
+  const box = el('div');
+  box.append(el('h3', null, title), el('p', null, note));
+  const tb = el('table', 'd-tbl');
+  // the row this turn landed on: the first bound the time fits under (none when slower than the table)
+  const hit = hitSec == null || hitSec < 0 ? -1 : table.findIndex(([bound]) => hitSec <= bound);
+  table.forEach(([bound, pts], i) => {
+    const tr = el('tr', i === hit ? 'hit' : null);
+    tr.append(el('td', null, `${bound}초 이내`), el('td', null, `${pts}점`));
+    tb.appendChild(tr);
+  });
+  const last = el('tr');
+  last.append(el('td', null, '그보다 늦으면'), el('td', null, '0점'));
+  tb.appendChild(last);
+  box.appendChild(tb);
+  return box;
+}
+const demoRow = (k, v, cls = '') => {
+  const li = el('li', `d-row ${cls}`);
+  li.append(el('span', 'd-row-k', k), el('span', 'd-row-v', v));
+  return li;
+};
+
+function renderDemoCriteria(rec) {
+  const box = $('demoCriteria');
+  const done = scores.filter((s) => !s.compat);
+  const key = JSON.stringify([done.length, rec ? [rec.sid, rec.firstSound, rec.afterTool, rec.speed] : null]);
+  if (key === demoCriteriaKey) return;
+  demoCriteriaKey = key;
+  box.textContent = '';
+  const sec = (title) => { const d = el('section', 'd-sec'); d.appendChild(el('h2', 'd-h', title)); box.appendChild(d); return d; };
+
+  // this call first: what the audience wants to see
+  const mine = sec('이번 통화 속도 점수');
+  if (!done.length) {
+    mine.appendChild(el('p', 'd-tl-empty', '한 턴을 마치면 턴별 점수가 여기에 쌓여요.'));
+  } else {
+    const ul = el('ul', 'd-rows');
+    done.forEach((s, i) => {
+      const how = s.reason ? s.reason : `첫 응답 ${secTxt(s.firstSound)}` + (s.toolCalled ? ` · 조회 뒤 ${secTxt(s.afterTool)}` : '');
+      ul.appendChild(demoRow(`${i + 1}턴 · ${how}`, `${fmtN(s.speed)}점`));
+    });
+    const avg = done.reduce((a, s) => a + s.speed, 0) / done.length;
+    ul.appendChild(demoRow('평균', `${fmtN(avg)}점`, 'total'));
+    mine.appendChild(ul);
+  }
+
+  const tables = sec('속도 점수표');
+  const grid = el('div', 'd-tables');
+  grid.append(
+    demoSpeedTable('첫 응답', '고객 말이 끝난 뒤 첫 소리까지', SPEED_TABLE, rec && !rec.reason ? rec.firstSound : null),
+    demoSpeedTable('조회 뒤 답', '조회 결과를 받은 뒤 첫 소리까지', AFTER_TOOL_TABLE, rec && rec.toolCalled ? rec.afterTool : null));
+  tables.appendChild(grid);
+  tables.appendChild(el('p', 'd-note', '조회를 한 턴은 두 점수의 평균이에요. 고객 말 도중에 소리를 내면 그 턴은 0점이에요.'));
+
+  const sys = sec('시스템 점수 구성');
+  const ul = el('ul', 'd-rows');
+  ul.append(demoRow('응대 · 매뉴얼과 조회 결과대로 맞게 안내했는지', '50%'),
+    demoRow('함수 · 맞는 때에 맞는 번호로 불렀는지', '20%'),
+    demoRow('속도 · 위 점수표', '30%'));
+  sys.appendChild(ul);
+  sys.appendChild(el('p', 'd-note', '응대와 함수는 운영진 채점기가 매겨요. 이 화면의 속도는 브라우저에서 잰 추정치예요.'));
+}
+
+// One readable line per step of the current turn. Times are seconds from the start of this turn's connection.
+function demoTimelineItems(t) {
+  const items = [];
+  const add = (at, cls, k, v = '') => { if (at != null) items.push({ at, cls, k, v }); };
+  const q = (s) => `“${demoShort(s, 60)}”`;
+  // short pauses: the server transcribes early at every pause and drops it when the customer goes on.
+  // Shown once, as a count on the end-of-utterance line, instead of one line per pause.
+  const pauses = t.dbg.filter((d) => d.msg.type === 'debug.vad' && d.msg.event === 'resume').length;
+  const eouAt = (t.dbg.find((d) => d.msg.type === 'debug.eou') || {}).at;
+  const lastEarly = [...t.dbg].reverse().find((d) => d.msg.type === 'debug.stt' && (eouAt == null || d.at <= eouAt));
+  for (const d of t.dbg) {
+    const { msg: m, at } = d;
+    switch (m.type) {
+      case 'debug.vad':
+        if (m.event === 'speech_start') add(at, 'cust', '고객 말 시작');
+        else if (m.event === 'resumed_after_commit') add(at, 'cust', '답 준비 중 고객 말이 이어짐', '준비하던 답을 버리고 다시 들어요');
+        break;
+      case 'debug.stt': if (d === lastEarly) add(at, 'cust', '미리 받아쓰기', q(m.text)); break;
+      case 'debug.eou': add(at, 'cust', '말 끝 판단', [m.silence_ms != null ? `조용한 시간 ${(m.silence_ms / 1000).toFixed(1)}초` : '',
+        pauses ? `중간에 ${pauses}번 쉼` : ''].filter(Boolean).join(' · ')); break;
+      case 'debug.stt.final': add(at, 'cust', '받아쓰기 확정', m.text ? q(m.text) : '인식된 말 없음'); break;
+      case 'debug.prefetch.given': add(at, 'tool', '미리 조회한 결과 사용', (m.names || []).map((n) => (TOOL_KO[n] || [n])[0]).join(', ')); break;
+      case 'debug.llm.round_start': add(at, 'ai', m.round ? `답 다시 만들기 (${m.round + 1}회차)` : '답 만들기 시작'); break;
+      case 'debug.llm.first_text': add(at, 'ai', '답 첫 글자'); break;
+      case 'debug.gate':
+        for (const d of m.decisions || []) {
+          if (!d.allowed) add(at, 'bad', `${(TOOL_KO[d.name] || [d.name])[0]} 보류`, GATE_REASONS[d.reason] || d.reason || '');
+        }
+        break;
+      case 'debug.tool.start': add(at, 'tool', `${(TOOL_KO[m.name] || [m.name])[0]} 요청`, demoArgs(m.arguments)); break;
+      case 'debug.tool.end': {
+        const st = m.result && m.result.status;
+        const v = !m.sent ? '함수 서버로 보내지 않음' : `${RESULT_KO[st] || st || '완료'}${m.ms != null ? ` · ${(m.ms / 1000).toFixed(1)}초` : ''}`;
+        add(at, m.sent ? 'tool' : 'bad', `${(TOOL_KO[m.name] || [m.name])[0]} 결과`, v);
+        break;
+      }
+      case 'debug.tool_ack': add(at, 'ai', '조회 안내 멘트', m.text ? q(m.text) : ''); break;
+      case 'debug.output_guard': add(at, 'bad', '출력 검사 표시', m.flag || ''); break;
+      case 'debug.reply_cancelled': add(at, 'bad', '준비하던 답 취소'); break;
+      default: break;
+    }
+  }
+  add(t.firstVoicedRecvAt, 'good', '상담원 첫 소리');
+  add(t.turnEndAt, 'good', '응답 끝', t.agentTexts.length ? q(t.agentTexts.join(' ')) : '');
+  if (t.error) add(t.endAt || performance.now(), 'bad', '문제 발생', t.error);
+  return items.sort((a, b) => a.at - b.at);
+}
+
+function renderDemoTimeline(t) {
+  const list = $('demoTimeline');
+  const items = t && t.debug ? demoTimelineItems(t) : [];
+  $('demoLogCopy').disabled = !items.length;
+  const key = JSON.stringify([t ? t.sid : null, items.length, items.length ? items[items.length - 1].v : '']);
+  if (key === demoTimelineKey) return;
+  demoTimelineKey = key;
+  list.textContent = '';
+  if (!items.length) {
+    list.appendChild(el('li', 'd-tl-empty', t && !t.debug
+      ? '호환 모드에서는 서버가 단계 정보를 보내지 않아요.'
+      : '말하기를 누르면 이번 턴의 진행 단계가 순서대로 남아요.'));
+    return;
+  }
+  for (const it of items) {
+    const li = el('li', `d-tl-i tl-${it.cls}`);
+    const x = el('div', 'd-tl-x');
+    x.appendChild(el('span', 'd-tl-k', it.k));
+    if (it.v) x.appendChild(el('span', 'd-tl-v', it.v));
+    li.append(el('span', 'd-tl-t', `${((it.at - t.t0) / 1000).toFixed(1)}초`), x);
+    list.appendChild(li);
+  }
+}
+
+async function copyDemoTimeline() {
+  const t = T;
+  const items = t && t.debug ? demoTimelineItems(t) : [];
+  if (!items.length) return;
+  const text = items.map((it) => `${((it.at - t.t0) / 1000).toFixed(2)}초  ${it.k}${it.v ? ` · ${it.v}` : ''}`).join('\n');
+  const btn = $('demoLogCopy');
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = '복사됨';
+  } catch {
+    btn.textContent = '복사 안 됨';
+  }
+  setTimeout(() => { btn.textContent = '기록 복사'; }, 1500);
 }
 
 function renderAudioInfo(t) {
@@ -1373,6 +1533,27 @@ refreshDevices().then(() => {
 $('btnStart').onclick = () => { startTest().catch((e) => T && fail(T, `예상하지 못한 오류: ${e.message || e}`)); };
 $('demoBtn').onclick = () => { if (T && !T.finalized) stopTest(); else $('btnStart').onclick(); };
 $('demoNew').onclick = demoNewCall;
+$('demoLogCopy').onclick = copyDemoTimeline;
+// side sheet tabs (WAI-ARIA tabs: click, or arrow keys while a tab has focus)
+const DEMO_TABS = ['demoTabWork', 'demoTabScore', 'demoTabLog'];
+function demoSelectTab(id, focus = false) {
+  for (const tid of DEMO_TABS) {
+    const tab = $(tid), on = tid === id;
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+    $(tab.getAttribute('aria-controls')).hidden = !on;
+  }
+  if (focus) $(id).focus();
+}
+DEMO_TABS.forEach((tid, i) => {
+  $(tid).onclick = () => demoSelectTab(tid);
+  $(tid).onkeydown = (e) => {
+    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    demoSelectTab(DEMO_TABS[(i + step + DEMO_TABS.length) % DEMO_TABS.length], true);
+  };
+});
 if (DEMO) { $('history').value = JSON.stringify(DEMO_SCENARIOS[0].history); $('useHistory').checked = true; }
 if (DEMO) { document.body.classList.add('demo'); document.title = 'AI 전화 상담원 · 시연'; renderDemo(); }
 $('btnStop').onclick = stopTest;
