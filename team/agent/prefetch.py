@@ -99,17 +99,25 @@ class Prefetch:
                 self._fire(name, args, "turn")
 
     # ── using the results ──────────────────────────────────────────────────
-    def ready(self) -> list[tuple[str, dict, dict]]:
-        """Finished lookups that found something and were not given to the model yet."""
+    def ready(self, at: int = 0) -> list[tuple[str, dict, dict]]:
+        """Finished lookups that found something and were not given to the model yet.
+        `at` = where in the dialog history they are put (see forget_given)."""
         out = []
         for k, t in self.tasks.items():
             if not t.done() or t.cancelled() or t.exception() or self.info[k]["used"]:
                 continue
             res = t.result()
             if isinstance(res, dict) and res.get("status") == "ok":
-                self.info[k]["used"] = "given"
+                self.info[k]["used"], self.info[k]["given_at"] = "given", at
                 out.append((self.info[k]["name"], self.info[k]["args"], res))
         return out
+
+    def forget_given(self, from_index: int):
+        """The dialog history from `from_index` was rolled back (resume_before_audio): lookups
+        given there can be given again."""
+        for i in self.info.values():
+            if i["used"] == "given" and i.get("given_at", 0) >= from_index:
+                i["used"] = None
 
     async def serve(self, name: str, arguments_json: str):
         """The model asks for a lookup that is already running / done: its result, else None."""

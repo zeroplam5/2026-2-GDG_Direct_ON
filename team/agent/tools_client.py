@@ -16,6 +16,9 @@ import httpx
 
 log = logging.getLogger("agent.tools")
 
+# lookups and search: sending them again is harmless (the official scorer does not count extra ones)
+SAFE_TO_REPEAT = {"get_order_info", "get_return_info", "search_products"}
+
 
 def _normalize_tool_list(raw) -> list[dict]:
     """Accepts [{"type":"function","function":{...}}], [{name,description,parameters}] or
@@ -41,6 +44,7 @@ class ToolsClient:
         self.log: list[dict] = []  # per-call timing for metrics (no payloads)
         self.list_error: str | None = None
         self.sent_count = 0  # requests actually sent to tools_url (counted before the POST)
+        self.sent_writes = 0  # of those, registrations (not safe to send twice; lookups / search are)
         self.debug = None  # optional callable(kind, **data); set only by the devui test server
 
     @property
@@ -99,6 +103,8 @@ class ToolsClient:
                     "message": "Ask the customer for: " + ", ".join(missing)}
         entry["sent"] = True
         self.sent_count += 1
+        if name not in SAFE_TO_REPEAT:
+            self.sent_writes += 1
         try:
             r = await self.http.post(f"{self.base}/tools/{name}", json=args, timeout=self.timeout_s,
                                      headers={"X-Session-Id": self.session_id})

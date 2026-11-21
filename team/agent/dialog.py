@@ -193,7 +193,7 @@ class Dialog:
     def _give_prefetched(self, turn_start: int):
         """Lookups that finished while the customer was speaking go in as function calls + results
         before the first LLM round, so the model can answer in one round."""
-        given = self.prefetch.ready() if self.prefetch else []
+        given = self.prefetch.ready(turn_start) if self.prefetch else []
         if not given:
             return []
         ids = [f"prefetch_{turn_start}_{i}" for i in range(len(given))]

@@ -102,8 +102,10 @@ def test_on_cancels_and_answers_both_parts_once(agent, two_mocks):
 
 
 def test_on_does_not_cancel_after_a_function_call_was_sent(agent, mock_server):
-    """Part 1 already names the order: the lookup is sent during the pause. Part 2 must not
-    cancel the turn (a registration would otherwise be sent twice)."""
+    """Part 1 already names the order: the lookup is sent during the pause. A lookup is safe to
+    send again (the scorer does not count extra lookups; prefetched lookups go out this way all
+    the time), so part 2 still cancels the turn and both parts are answered once. Only a
+    registration that was sent keeps the turn (tested in test_v3_integration.py)."""
     murl, _ = mock_server
     tools = httpx.get(murl + "/tools").json()
     posts = []
@@ -141,8 +143,9 @@ def test_on_does_not_cancel_after_a_function_call_was_sent(agent, mock_server):
 
     r = run(go())
     srv.shutdown()
-    assert r["turn_end"] and "배송중" in r["text"]
-    assert posts == ["/tools/get_order_info"]                # sent once, never repeated
+    assert r["turn_end"] and [e["type"] for e in r["events"]].count("turn.end") == 1
+    assert "배송중" in r["text"]
+    assert posts == ["/tools/get_order_info"] * 2            # the lookup again for the whole utterance
     row = _metrics(cfg)[-1]
-    assert row["user_text"] == PART2                         # turn kept: part 1 only
-    assert row["resumed_after_commit"] == 0 and row["resume_blocked"] == "tool_sent"
+    assert row["user_text"] == f"{PART2} 그리고 하나 더요."   # one reply to both parts
+    assert row["resumed_after_commit"] == 1 and row["resume_blocked"] is None

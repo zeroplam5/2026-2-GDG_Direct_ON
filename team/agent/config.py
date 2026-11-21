@@ -116,6 +116,9 @@ class Config:
     llm_token_param: str = "auto"          # auto | max_tokens | max_completion_tokens | none
     llm_reasoning_effort: str = "auto"     # auto -> "none" for gpt-5.x (5.1+), "minimal" for gpt-5 / o*, else not sent
     llm_timeout_s: float = 12.0
+    # LLM warm-up (session.py _warm_llm): when no LLM call ran for this many seconds, a new session
+    # sends one small request with the real prompt while the customer is speaking (0 = off)
+    llm_warm_idle_s: float = 240.0
 
     tts_provider: str = "gemini"           # official (kit README): gemini. Others: openai | sapi (Windows, local) | tone (test double)
     tts_model: str = "gpt-4o-mini-tts"

@@ -130,6 +130,8 @@ class Session:
                 await asyncio.shield(tools_task)  # only functions listed by GET /tools are ever sent
                 pf.session_start()
             self.prefetch_task = asyncio.create_task(prefetch_at_start())
+        if self.cfg.llm_warm_idle_s > 0 and self.cfg.llm_provider != "scripted":
+            self.warm_task = asyncio.create_task(self._warm_llm(tools_task))
         if self.debug:
             self.tools.debug = self._dbg
             self.dialog.debug = self._dbg
@@ -162,7 +164,8 @@ class Session:
             log.info("[%s] connection ended: %s", self.sid, type(e).__name__)
         finally:
             self.closed = True
-            for t in (self.stt_task, self.resp_task, tools_task, getattr(self, "prefetch_task", None)):
+            for t in (self.stt_task, self.resp_task, tools_task, getattr(self, "prefetch_task", None),
+                      getattr(self, "warm_task", None)):
                 if t and not t.done():
                     t.cancel()
             if getattr(self, "dialog", None) and self.dialog.prefetch:
@@ -236,10 +239,11 @@ class Session:
         if m.get("_out_started") or self.resp_task is None or self.resp_task.done():
             self._stop_listening()
             return False
-        if self.tools.sent_count > m.get("_tools_sent_at_commit", 0):
-            # a function call already reached the function server: cancelling could make the
-            # next turn send it again (e.g. a second registration)
-            m["resume_blocked"] = "tool_sent"
+        if self.tools.sent_writes > m.get("_writes_sent_at_commit", 0):
+            # a registration already reached the function server: cancelling could make the
+            # next turn send it again (a second registration). Lookups (also prefetched ones)
+            # are safe to send again, so they do not stop listening.
+            m["resume_blocked"] = "write_sent"
             self._stop_listening()
             return False
         self.resp_heard.extend(frame)
@@ -327,7 +331,7 @@ class Session:
             self.resp_listen = True
             self.resp_prev_audio, self.resp_heard = bytes(self.ep.utt), bytearray()
             tools = getattr(self, "tools", None)
-            self.m["_tools_sent_at_commit"] = tools.sent_count if tools else 0
+            self.m["_writes_sent_at_commit"] = tools.sent_writes if tools else 0
         stt_task = self.stt_task if (self.stt_task and self.stt_version == self.ep.version) else None
         if stt_task is None and self.stt_task:
             self.stt_task.cancel()
@@ -340,6 +344,29 @@ class Session:
         self.resp_task = asyncio.create_task(self._respond(stt_task, audio, self.m))
 
     # ── response ──────────────────────────────────────────────────────────
+    async def _warm_llm(self, tools_task):
+        """LLM warm-up while the customer is still speaking. When no LLM call ran for
+        llm_warm_idle_s, one small request goes out with this session's real system message and
+        function list, so the provider's prompt cache and the connection are ready for the first
+        answer (KULLM, 2026-11-21: 1.66 s cold vs 1.28 s with 12,288 of 12,400 tokens cached).
+        While calls keep coming (the evaluator's back-to-back items) nothing extra is sent."""
+        app = self.app
+        if time.monotonic() - getattr(app, "llm_last_used", float("-inf")) < self.cfg.llm_warm_idle_s:
+            return
+        app.llm_last_used = time.monotonic()
+        try:
+            await asyncio.shield(tools_task)  # the same function list as the real calls (same prefix)
+            msgs = [self.dialog.messages[0], {"role": "user", "content": "연결 확인입니다. '네'라고만 답하세요."}]
+            t = time.perf_counter()
+            async for _ in app.llm.stream(msgs, tools=self.tools.openai_schemas() or None, tool_choice="none"):
+                pass
+            log.info("[%s] LLM warm-up %.2fs", self.sid, time.perf_counter() - t)
+            self._dbg("llm_warm", ms=round((time.perf_counter() - t) * 1000, 1))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # a warm-up never affects the call
+            log.info("[%s] LLM warm-up failed: %s", self.sid, type(e).__name__)
+
     async def _respond(self, stt_task, audio: bytes, m: dict):
         spoken = {"n": 0}
         user_text, reply = "", []
@@ -366,6 +393,7 @@ class Session:
                     m["tools_available"] = sorted(self.tools.names)
                     if self.tools.list_error:
                         m["tools_list_error"] = self.tools.list_error
+                    self.app.llm_last_used = time.monotonic()  # the warm-up is skipped while calls keep coming
                     await self._pipeline(self.dialog.run_turn(user_text, m), m, spoken, reply)
                     m["outcome"] = "ok"
             except TimeoutError:
@@ -377,6 +405,8 @@ class Session:
                 if m.get("_resumed"):
                     # cancelled by resume_before_audio: nothing was said, the utterance continues
                     del self.dialog.messages[hist_len:]
+                    if self.dialog.prefetch:  # prefetched results given to the rolled-back turn: give them again
+                        self.dialog.prefetch.forget_given(hist_len)
                     self._dbg("reply_cancelled", reason="resumed_after_commit")
                 raise
             except Exception as e:
