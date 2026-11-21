@@ -4,8 +4,8 @@
 # macOS: nvidia-cublas-cu12 / nvidia-cudnn-cu12 have no macOS wheels.
 websockets==17.4
 httpx==0.28.1
-numpy==2.5.5
-scipy==1.18.1
+numpy==2.4.6                # 2.5.x needs Python >=3.12; contest container is 3.11
+scipy==1.17.1               # 1.18.x needs Python >=3.12
 openai==3.55.0
 webrtcvad-wheels==2.0.14.post1
 # tests
