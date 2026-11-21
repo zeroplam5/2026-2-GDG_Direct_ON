@@ -55,7 +55,12 @@ class Config:
     # soniox provider (11/21 official STT). Model names change: check GET https://api.soniox.com/v1/models
     soniox_url: str = "wss://stt-rt.soniox.com/transcribe-websocket"
     soniox_api_key_env: str = "SONIOX_API_KEY"
-    soniox_model: str = "stt-rt-v4"
+    soniox_model: str = "stt-rt-v4"         # contest site (11/21) names stt-rt-v6: set AGENT_SONIOX_MODEL in .env
+    # how the API key is sent (not verified with a real key yet):
+    #   "config" = api_key in the first JSON message (current behaviour, Soniox reference)
+    #   "header" = Authorization: Bearer header (contest site example, 11/20)
+    #   "both"   = both
+    soniox_auth: str = "config"
     soniox_language_hints: str = "ko"      # comma separated
     soniox_chunk_ms: int = 100             # utterance audio is sent in chunks of this size, as fast as possible
     # end-of-utterance mode. vad (default) = local VAD + speculative STT + completeness check.

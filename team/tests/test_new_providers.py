@@ -117,3 +117,37 @@ def test_reasoning_effort_per_model_family():
     assert model_params(Config(llm_model="gpt-5")).get("reasoning_effort") == "minimal"
     p41 = model_params(Config(llm_model="gpt-4.1"))
     assert "reasoning_effort" not in p41 and "max_tokens" in p41
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("mode,header,in_config", [
+    ("config", None, True),                 # default: unchanged behaviour
+    ("header", "Bearer test-key", False),   # contest site example (11/20)
+    ("both", "Bearer test-key", True),
+])
+def test_soniox_auth_modes_on_the_wire(monkeypatch, mode, header, in_config):
+    seen = {}
+
+    async def fake(ws):
+        seen["auth"] = ws.request.headers.get("Authorization")
+        seen["config"] = json.loads(await ws.recv())
+        async for m in ws:
+            if m == "":
+                await ws.send(json.dumps({"tokens": [{"text": "네", "is_final": True}], "finished": True}))
+                return
+
+    async def run():
+        async with websockets.serve(fake, "127.0.0.1", 0) as srv:
+            port = srv.sockets[0].getsockname()[1]
+            monkeypatch.setenv("SONIOX_API_KEY", "test-key")
+            return await SonioxSTT(Config(soniox_url=f"ws://127.0.0.1:{port}", soniox_auth=mode)).transcribe(b"\0" * 640)
+
+    assert asyncio.run(run()).text == "네"
+    assert seen["auth"] == header
+    assert ("api_key" in seen["config"]) is in_config
+
+
+def test_soniox_auth_default_is_unchanged():
+    assert Config().soniox_auth == "config"

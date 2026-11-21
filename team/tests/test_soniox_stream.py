@@ -123,3 +123,12 @@ def test_stream_failure_falls_back_to_vad_mode(cfg, mock, monkeypatch):
 
 def test_default_mode_is_vad_and_opens_no_stream():
     assert Config().eou_mode == "vad"
+
+
+def test_stream_sends_header_when_soniox_auth_is_header(cfg, mock, monkeypatch):
+    setup(cfg, mock, monkeypatch, soniox_auth="header")
+    from team.agent.providers.stt import soniox_auth
+    assert soniox_auth(cfg, "test-key") == ({"Authorization": "Bearer test-key"}, {})
+    from team.agent.soniox_stream import SonioxStream
+    s = SonioxStream(cfg, lambda *a: None, lambda *a: None)
+    assert "api_key" not in s.config_msg() and s.config_msg()["model"] == cfg.soniox_model

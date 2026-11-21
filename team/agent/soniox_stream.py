@@ -14,8 +14,9 @@ pipeline and the starter-kit evaluator:
     (soniox_fallback_silence_ms) + batch STT if Soniox never sends "<end>" or the stream fails
   * a new non-empty token after "<end>" means the customer resumed: the pending end is dropped
 
-Differences to verify with a real key: authentication goes in the config message ("api_key", same
-as providers/stt.py SonioxSTT); endpoint_server.py used an "Authorization: Bearer" header instead.
+Authentication follows cfg.soniox_auth (providers/stt.soniox_auth): "config" (default, api_key in the
+first message), "header" (Authorization: Bearer, as in the contest site example) or "both".
+Which one Soniox accepts is not verified with a real key yet.
 Endpoint parameter names follow the Soniox docs cited in team/docs/ENDPOINTING.md.
 """
 from __future__ import annotations
@@ -24,6 +25,8 @@ import asyncio
 import json
 import logging
 import os
+
+from .providers.stt import soniox_auth
 
 log = logging.getLogger("agent.soniox_stream")
 
@@ -50,7 +53,7 @@ class SonioxStream:
     def config_msg(self) -> dict:
         c = self.cfg
         return {
-            "api_key": self._key,
+            **soniox_auth(c, self._key)[1],
             "model": c.soniox_model,
             "audio_format": "pcm_s16le",
             "sample_rate": 16000,
@@ -89,8 +92,8 @@ class SonioxStream:
     async def _run(self):
         import websockets
         try:
-            async with websockets.connect(self.cfg.soniox_url, max_size=None,
-                                          open_timeout=self.cfg.stt_timeout_s) as ws:
+            async with websockets.connect(self.cfg.soniox_url, max_size=None, open_timeout=self.cfg.stt_timeout_s,
+                                          additional_headers=soniox_auth(self.cfg, self._key)[0]) as ws:
                 await ws.send(json.dumps(self.config_msg()))
                 self.connected = True
                 sender = asyncio.create_task(self._send_loop(ws))

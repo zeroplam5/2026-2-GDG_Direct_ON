@@ -159,6 +159,14 @@ class OpenAISTT:
         return STTResult(text, (time.perf_counter() - t) * 1000, {"hedged": hedged})
 
 
+def soniox_auth(cfg, key: str) -> tuple[dict, dict]:
+    """(HTTP headers, extra first-message fields) for the Soniox WebSocket, per cfg.soniox_auth."""
+    mode = (getattr(cfg, "soniox_auth", "config") or "config").lower()
+    headers = {"Authorization": f"Bearer {key}"} if mode in ("header", "both") else {}
+    fields = {"api_key": key} if mode in ("config", "both") else {}
+    return headers, fields
+
+
 class SonioxSTT:
     """Soniox real-time STT over WebSocket (11/21 official STT). NOT yet tested with a real key.
 
@@ -178,7 +186,7 @@ class SonioxSTT:
 
     def _config_msg(self) -> dict:
         return {
-            "api_key": self._key,
+            **soniox_auth(self.cfg, self._key)[1],
             "model": self.cfg.soniox_model,
             "audio_format": "pcm_s16le",
             "sample_rate": 16000,
@@ -191,7 +199,8 @@ class SonioxSTT:
         step = max(640, 32 * self.cfg.soniox_chunk_ms)  # bytes per chunk at 16 kHz s16le
         final: list[str] = []
         partial = ""
-        async with websockets.connect(self.cfg.soniox_url, max_size=None, open_timeout=self.cfg.stt_timeout_s) as ws:
+        async with websockets.connect(self.cfg.soniox_url, max_size=None, open_timeout=self.cfg.stt_timeout_s,
+                                      additional_headers=soniox_auth(self.cfg, self._key)[0]) as ws:
             await ws.send(json.dumps(self._config_msg()))
             for i in range(0, len(pcm), step):
                 await ws.send(pcm[i:i + step])
