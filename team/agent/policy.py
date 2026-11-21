@@ -109,16 +109,24 @@ def normalize_history(history) -> list[tuple[str, str]]:
     """THE single place that knows the history shape. The starter kit only shows history=[]
     and the official schema is published on 2026-11-21: adapt this function then.
     Returns [(role, text)] with role "customer" | "agent" | other label, or [] when the
-    shape is unknown (callers then fall back to the raw JSON)."""
+    shape is unknown (callers then fall back to the raw JSON).
+    Official shape (SPEC.md, 2026-11-21): {"role": "customer"|"agent", "text"} plus function
+    records {"role": "tool_call", "name", "arguments"} and {"role": "tool_result", "name",
+    "result"}. Function records become ("tool_call" | "tool_result", "name {json}") so the
+    numbers in them count as stated (gate grounding) and the model sees earlier results."""
     if not isinstance(history, list) or not all(isinstance(h, dict) for h in history):
         return []
     out = []
     for h in history:
-        role = h.get("role") or h.get("speaker") or "?"
+        role = str(h.get("role") or h.get("speaker") or "?").lower()
+        if role in ("tool_call", "tool_result"):
+            body = h.get("arguments") if role == "tool_call" else h.get("result")
+            out.append((role, f"{h.get('name', '')} {json.dumps(body, ensure_ascii=False)}"))
+            continue
         text = h.get("text") or h.get("content") or h.get("utterance")
         if text is None:
-            return []
-        out.append((_ROLE.get(str(role).lower(), str(role)), str(text)))
+            continue  # an entry without text is skipped, the rest of the history is kept
+        out.append((_ROLE.get(role, role), str(text)))
     return out
 
 
@@ -127,7 +135,7 @@ def format_history(history) -> str:
     if not history:
         return ""
     turns = normalize_history(history)
-    who = {"customer": "고객", "agent": "상담원"}
+    who = {"customer": "고객", "agent": "상담원", "tool_call": "함수 호출", "tool_result": "함수 결과"}
     lines = [f"{who.get(r, r)}: {t}" for r, t in turns]
     s = "\n".join(lines) if lines else json.dumps(history, ensure_ascii=False)
     return s[-3000:]

@@ -1,11 +1,23 @@
 {
   "_comment": "PRACTICE rules pack (not from the official manual). Every rule the CODE checks lives here; the prompt .md keeps only prose (tone, how to talk). On 2026-11-21 make an official pack (see README.md). Sections: functions/_default = pre-execution gate (team/agent/gate.py) and the auto-generated [함수 실행 규칙] prompt section; confirm_template (optional, per write function) = the question said directly when the gate blocks for missing consent, filled with the call's arguments; handoff = hand-off signal keywords (policy.handoff_flags, memo only); consent = consent / refusal word patterns used by the gate; output_check = word patterns of the output check's unconfirmed-time rule. Regex values are Python re syntax.",
 
-  "arg_labels": {"order_id": "주문번호", "phone_number": "전화번호"},
+  "arg_labels": {"order_id": "주문번호", "phone_number": "전화번호", "order_number": "주문번호",
+                 "buyer_cellphone": "주문자 전화번호", "customer_phone_number": "전화번호", "query": "검색어",
+                 "reason": "사유", "return_items": "반품할 상품", "customer_name": "고객 이름",
+                 "pickup_address": "회수 주소", "refund_account": "환불 계좌"},
+
+  "_official_note": "get_return_info, search_products, return_order, return_order_item, exchange_order and buyer_cellphone were added on 11/21 only so the 8 official functions are not blocked by _default; same pattern as the existing entries. Review confirm modes against the official scenarios (LLM owner).",
 
   "_default": {"kind": "write", "confirm": "explicit"},
   "functions": {
-    "get_order_info": {"kind": "read", "value_args": ["order_id"]},
+    "get_order_info": {"kind": "read", "value_args": ["order_id", "buyer_cellphone"]},
+    "get_return_info": {"kind": "read", "value_args": ["customer_phone_number"]},
+    "search_products": {"kind": "read", "value_args": []},
+    "return_order": {"kind": "write", "confirm": "explicit", "value_args": ["order_number"],
+                     "confirm_template": "주문번호 {order_number} 주문을 반품 접수해 드릴까요?"},
+    "return_order_item": {"kind": "write", "confirm": "explicit", "value_args": []},
+    "exchange_order": {"kind": "write", "confirm": "explicit", "value_args": ["order_number"],
+                       "confirm_template": "주문번호 {order_number} 주문을 교환 접수해 드릴까요?"},
     "request_callback": {"kind": "write", "confirm": "explicit", "value_args": ["phone_number"],
                          "formats": {"phone_number": "01[016789][0-9]{7,8}"},
                          "confirm_template": "{phone_number} 번호로 상담원 연락을 접수해 드릴까요?"},

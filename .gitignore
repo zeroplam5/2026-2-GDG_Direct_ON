@@ -16,3 +16,7 @@ team/runs/**/*.log
 
 # local voice test UI timing log
 team/runs/devui_metrics.jsonl
+
+# 제출 압축에만 넣는 공식 자료 (대회 밖으로 옮기지 않음)
+official/
+submission*.zip
