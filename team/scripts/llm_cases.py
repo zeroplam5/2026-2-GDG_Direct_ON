@@ -130,7 +130,8 @@ def gate_only(cases, tools, rules):
     tally, blocked = collections.Counter(), []
     for c in cases:
         for tc in c["reference"].get("tool_calls", []):
-            g = Gate(rules, {"history": c["history"], "caller": c.get("customer_profile")})
+            # evidence on: the reference calls carry no 근거 칸, so this checks the fallback path
+            g = Gate(rules, {"history": c["history"], "caller": c.get("customer_profile")}, evidence=True)
             g.augment(schemas)
             d = g.check(tc["name"], json.dumps(tc["arguments"], ensure_ascii=False), c["customer_utterance"])
             tally[d.allowed] += 1
@@ -144,7 +145,8 @@ async def run_case(c, cfg, llm, tools, db, static_template, phrases, rules):
     start = {"session_id": c["case_id"], "now": c["now"], "history": c["history"], "caller": c.get("customer_profile")}
     kt = KitTools(tools, db, c)
     dlg = Dialog(llm, kt, policy.build_static_prompt(static_template, phrases, rules, c["now"]), cfg, phrases,
-                 gate=Gate(rules, start) if cfg.tool_gate else None, context=policy.build_context(start))
+                 gate=Gate(rules, start, evidence=cfg.gate_evidence) if cfg.tool_gate else None,
+                 context=policy.build_context(start))
     if cfg.prefetch:  # as in the session: lookups called ahead while the customer is still speaking
         dlg.prefetch = Prefetch(kt, rules, c["history"], c.get("customer_profile"), max_calls=cfg.prefetch_max_calls)
         dlg.prefetch.session_start()

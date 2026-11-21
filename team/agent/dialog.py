@@ -289,7 +289,9 @@ class Dialog:
             if self.gate:
                 last_agent = self._last_agent_text(turn_start)
                 prior, fresh = self._prior(turn_start), self._turn_results(turn_start)
-                decisions = [self.gate.check(c.name, c.arguments, user_text, last_agent, prior=prior, turn_results=fresh)
+                said_by_customer = self._customer_words()
+                decisions = [self.gate.check(c.name, c.arguments, user_text, last_agent, prior=prior, turn_results=fresh,
+                                             customer=said_by_customer)
                              for c in calls]
                 m["gate"].extend(d.log_entry(c.name) for c, d in zip(calls, decisions))
                 self._dbg("gate", decisions=[{"name": c.name, "allowed": d.allowed, "reason": d.reason,

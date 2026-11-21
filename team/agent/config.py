@@ -158,6 +158,9 @@ class Config:
     # pre-execution gate (team/agent/gate.py): code checks format, grounding and customer consent
     # before a function call is sent
     tool_gate: bool = True
+    # evidence field (근거 칸): write functions also carry, per value, the customer's words it came from;
+    # the gate checks each quote against what the customer really said (team/agent/gate.py EVIDENCE_FIELD)
+    gate_evidence: bool = True
     # the KULLM gateway masks phone / order numbers in user messages ("[PHONE]"): send them to the
     # model as slot names with a table in the system message (team/agent/number_slots.py)
     number_slots: bool = True
