@@ -7,7 +7,7 @@
   4. turn.end 를 보낸다
 
 받아쓰기, 응대 판단, 음성합성은 들어 있지 않다. 이 자리를 여러분의 설계로 채운다.
---demo-tool 을 주면 모의 함수 서버를 부르는 법도 보여 준다 (발신자 번호로 회원 조회).
+--demo-tool 을 주면 모의 함수 서버를 부르는 법도 보여 준다 (발신자 번호로 주문 조회).
 이 서버로 측정기를 돌리면 속도 점수는 나오지만 응대 점수는 거의 0이다.
 
 실행: python3 server.py --port 9000 [--demo-tool]
@@ -63,7 +63,7 @@ async def handler(ws, http, demo_tool):
     await ws.send(beep())
 
     if demo_tool and start.get("caller"):
-        result = await call_tool(http, start, "get_order_info", {"order_id": "DEMO1001"})
+        result = await call_tool(http, start, "get_order_info", {"order_id": None, "buyer_cellphone": start["caller"]["phone"]})
         print(start["case_id"], "get_order_info →", json.dumps(result, ensure_ascii=False)[:120])
         await ws.send(beep(hz=660))                    # 조회 뒤 답 자리
 

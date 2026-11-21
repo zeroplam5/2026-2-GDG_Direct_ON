@@ -21,9 +21,9 @@ Responses (--match normalized, the default) follow SPEC.md:
   * --match strict: the old exact-JSON-equality matching (practice tests only).
 
 Data files:
-    --tools PATH / MOCK_TOOLS_PATH            (default data/demo_tools.json)
-    --db PATH (= --data) / MOCK_DATA_PATH     (default data/demo_mock_data.json)
-Official run: bash start_mock.sh <mock_db_test.json> -> --db <file> --tools official/tools.json --host 0.0.0.0
+    --tools PATH / MOCK_TOOLS_PATH            (default team/data/demo/demo_tools.json)
+    --db PATH (= --data) / MOCK_DATA_PATH     (default team/data/demo/demo_mock_data.json)
+Official run: bash start_mock.sh <mock_db_test.json> -> mock_tools/mock_server.py (kit skeleton) uses MockStore
 Data format: {function_name: [{"arguments": {...}, "result": {...}}, ...]}.
 """
 from __future__ import annotations
@@ -39,8 +39,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 REPO = Path(__file__).resolve().parents[2]
-DEFAULT_TOOLS = REPO / "data" / "demo_tools.json"
-DEFAULT_DATA = REPO / "data" / "demo_mock_data.json"
+DEFAULT_TOOLS = REPO / "team" / "data" / "demo" / "demo_tools.json"
+DEFAULT_DATA = REPO / "team" / "data" / "demo" / "demo_mock_data.json"
 
 
 READ_FUNCTIONS = {"get_order_info", "get_return_info"}

@@ -22,7 +22,7 @@ from team.mock.mock_api import MockStore
 
 REPO = Path(__file__).resolve().parents[2]
 OFFICIAL = load_rules(str(OFFICIAL_PACK / "rules.json"))
-KIT = REPO / "directon-2026-voice-cs"
+KIT = REPO if (REPO / "data" / "mock_db.json").is_file() else REPO / "directon-2026-voice-cs"  # kit layout: data/ at the root
 
 HISTORY = [
     {"role": "customer", "text": "환불하려면 어떻게 해야 돼요?"},

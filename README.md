@@ -1,12 +1,28 @@
 # DIRECT:ON 2026 팀 음성 상담원 (`prototype` 브랜치)
 
 전화 상담원 AI입니다. 고객 음성(16 kHz PCM)을 WebSocket으로 받아 **듣기(STT) → 답 만들기(LLM)·함수 호출 → 말하기(TTS)** 를 거쳐 음성으로 답하고 `turn.end`를 보냅니다.
-팀이 만든 코드는 모두 `team/` 폴더에 있습니다. 스타터킷 원본(`docs/`, `example_server/`, `mock_tools/`, `eval/`, `data/`)은 고치지 않았고, 스타터킷 원본 README는 [docs/startREADME.md](docs/startREADME.md)로 옮겼습니다.
+저장소 맨 위는 **공식 키트 `directon-2026-voice-cs`와 같은 배치**입니다. 팀이 만든 코드는 `team/` 폴더에 있습니다.
 
-> **지금 상태 (2026-11-20)**
-> - 기능 브랜치 5개와 브라우저 테스트 화면을 합친 통합본입니다 ([docs/INTEGRATION_REPORT.md](team/docs/INTEGRATION_REPORT.md)).
-> - **대회 공식 모델(Soniox·Gemini TTS·gpt-5.4-mini)은 아직 실제 키로 시험하지 않았습니다.** 키는 11/21에 받습니다.
-> - 프롬프트·규칙·연습 음성·모의 데이터는 모두 **연습용**입니다. 공식 매뉴얼·문항·채점 기준이 아닙니다.
+| 위치 | 내용 | git |
+|---|---|---|
+| `start_server.sh`, `start_mock.sh`, `requirements.txt` | 제출 형식 (키트 README 7장). `start_mock.sh`는 키트와 같은 명령 | 커밋 |
+| `eval/run_eval.py`, `eval/score.py` | 키트 측정기·채점기 **원본 그대로** (최종 평가와 같은 도구) | 커밋 |
+| `example_server/server.py` | 키트 뼈대 서버 원본 (신호음만) | 커밋 |
+| `mock_tools/mock_server.py` | 키트 뼈대 그대로 + 비어 있던 `lookup()`만 채움 (규칙은 `team/mock/mock_api.py`) | 커밋 |
+| `data/` (`brand/`, `mock_db.json`, `practice_cases.jsonl`, `audio/practice/`, `examples.json`) | 키트 자료. **대회 밖으로 옮기거나 공개 금지** (DATA.md) | **제외** (`.gitignore`) |
+
+예전 스타터킷 v2의 데모 자료(`DEMO1001` 등)는 `team/data/demo/`로 옮겼습니다(테스트·devui 연습용). 스타터킷 원본 README는 [docs/startREADME.md](docs/startREADME.md)에 있습니다(옛 판).
+
+> **지금 상태 (2026-11-21)**
+> - 11/21 공식 키트 기준입니다. 서버 기본값은 공식 묶음(`team/agent/packs/official`) + `data/brand` + 공식 모델(Soniox `stt-rt-v6`, `gemini-3.8-flash-lite-tts`, `gpt-5.4-mini`)입니다.
+> - 키트 명령(`bash start_mock.sh data/mock_db.json`, `bash start_server.sh`, `eval/run_eval.py`, `eval/score.py`)으로 연습 80문항이 끝까지 도는 것을 대역(키 없음)으로 확인했습니다. **실제 키로 잰 점수는 아직 없습니다.**
+
+### 키트 자료 넣기 (처음 한 번)
+키트 압축을 저장소 맨 위에 `directon-2026-voice-cs/`로 풀었다면, 자료를 키트와 같은 위치(`data/`)로 복사합니다.
+```bash
+cp -r directon-2026-voice-cs/data .        # PowerShell: Copy-Item -Recurse directon-2026-voice-cs\data .
+```
+`data/`가 없으면 서버는 `directon-2026-voice-cs/data/brand`를 대신 읽습니다.
 
 ---
 
@@ -51,10 +67,11 @@ copy team\env.example .env        # 맥·리눅스: cp team/env.example .env
 
 ### 4. 실행: 터미널 2개
 
-**터미널 A: 모의 함수 서버** (항상 먼저, 끄지 않고 둠)
+**터미널 A: 모의 함수 서버** (항상 먼저, 끄지 않고 둠. 키트 자료 `data/mock_db.json`, 함수 8개)
 ```powershell
-.venv/Scripts/python -m team.mock.mock_api --port 8100
+.venv/Scripts/python mock_tools/mock_server.py --port 8100 --db data/mock_db.json
 ```
+예전 데모 함수 2개(`DEMO1001` 등)로 시험하려면 `.venv/Scripts/python -m team.mock.mock_api --port 8100`.
 
 **터미널 B: 테스트 서버** (아래 중 하나)
 ```powershell
@@ -78,16 +95,7 @@ copy team\env.example .env        # 맥·리눅스: cp team/env.example .env
    - **시간**: 말 끝 → 첫 응답 소리까지의 단계별 시간
 5. 다음 테스트는 **테스트 시작**을 다시 누릅니다. 이어지는 대화로 시험하려면 먼저 **방금 결과를 history에 추가**.
 
-**바로 해 볼 문장**
-
-| 말할 문장 | 기대 결과 |
-|---|---|
-| "주문번호 데모 일공공일 배송 어디쯤이에요?" | `get_order_info(DEMO1001)` → 배송중 |
-| "주문번호 데모 이공공이 조회해 주세요" | `get_order_info(DEMO2002)` → 배송완료 |
-| "주문번호 데모 구구구구 조회해 주세요" | 없는 주문 → "확인되는 내역 없음" |
-| "내일 다시 전화 주실 수 있나요?" (실제 AI 모드) | 관문이 콜백 접수를 막고 번호 확인 질문 |
-
-연습용 함수는 `get_order_info`(주문 조회)와 `request_callback`(콜백 접수) 두 개뿐이고, 주문번호는 모두 `DEMO`로 시작합니다. 자세한 사용법은 [devui/README.md](team/devui/README.md).
+**바로 해 볼 것**: `data/mock_db.json`의 `get_order_info` 기록에 있는 주문번호나 전화번호를 불러 "배송 어디쯤이에요?"라고 물어봅니다. 없는 번호는 "확인되는 내역 없음"이 나와야 합니다. 연습 문항과 정답은 `data/practice_cases.jsonl`, 예시 10개는 `data/examples.json`에 있습니다. 자세한 사용법은 [devui/README.md](team/devui/README.md).
 
 ---
 
@@ -103,23 +111,25 @@ copy team\env.example .env        # 맥·리눅스: cp team/env.example .env
 
 모든 명령 앞에 `.venv/Scripts/python -m` 을 붙입니다. 대체물(`fake`, `scripted`, `tone`)은 AI가 아닙니다. 화면에도 경고가 뜹니다.
 
-## 측정기로 속도 재기 (공식 측정에 가까운 값)
-터미널 A(모의 서버)를 켠 채로:
-```powershell
-# 터미널 B: 대회용 서버 (.env 설정 사용, 기본 = OpenAI STT·gpt-4.1·OpenAI TTS → 비용 발생)
-.venv/Scripts/python -m team.agent.server --port 9000
-
-# 터미널 C: 스타터킷 측정기 → 속도 요약
-$env:PYTHONUTF8=1          # 맥·리눅스: export PYTHONUTF8=1
-.venv/Scripts/python eval/run_eval.py --server ws://127.0.0.1:9000 --cases team/data/practice_ko/cases.jsonl --audio team/data/practice_ko/audio --mock http://127.0.0.1:8100 --out team/runs/check_speed --concurrency 1
-.venv/Scripts/python eval/score_demo.py --run team/runs/check_speed
+## 공식 측정기로 점수 보기 (키트 README 6장과 같은 순서)
+```bash
+# 터미널 A: 모의 함수 서버 (제출 때 운영진이 쓰는 명령 그대로)
+bash start_mock.sh data/mock_db.json
+# 터미널 B: 상담 서버 (.env 설정 사용 → 비용 발생)
+bash start_server.sh                      # = python3 -m team.agent.server --host 0.0.0.0 --port 9000
+# 터미널 C: 키트 측정기 (함수 중계 8200번) → 키트 채점기
+cd eval
+python3 run_eval.py --server ws://localhost:9000 --mock http://localhost:8100 \
+                    --cases ../data/practice_cases.jsonl --audio ../data/audio/practice --out runs/try1 --limit 20
+python3 score.py --run runs/try1 --cases ../data/practice_cases.jsonl          # OPENAI_API_KEY 있으면 응대 점수·총점까지
 ```
-- `score_demo`는 첫 소리 점수만 계산합니다. 함수 문항은 `results.jsonl`의 `after_tool_sound`(조회 뒤 답)도 확인합니다.
-- 키 없이 파이프라인만: `team.agent.server --port 9000 --llm scripted`
+- Windows: `bash`가 없으면 `start_*.sh` 안의 명령을 `.venv/Scripts/python`으로 직접 실행하고, 측정기 앞에 `$env:PYTHONUTF8=1`.
+- 키 없이 흐름만(대역): `AGENT_STT_PROVIDER=fake AGENT_STT_FAKE_TEXT=<case_id→손님 말 JSON> AGENT_LLM_PROVIDER=scripted AGENT_TTS_PROVIDER=tone`. 함수 점수는 의미 없고, 받아쓰기가 대역이라 말 끝 판단도 실제와 다릅니다.
+- `eval/runs/`의 결과에는 키트 문장이 들어 있으니 커밋하지 않습니다(`.gitignore`의 `runs/**` 외 파일도 주의).
 - 반복 측정·설정 비교: `team.scripts.bench` ([docs/LATENCY.md](team/docs/LATENCY.md))
 
-## 11/21 공식 모델로 실행 (Soniox STT · Gemini 2.5 Flash TTS · gpt-5.4-mini)
-`.env`에 키 3개와 모델 선택 3줄을 넣습니다(예시는 `team/env.example`).
+## 11/21 공식 모델로 실행 (Soniox `stt-rt-v6` · Gemini `gemini-3.8-flash-lite-tts` · gpt-5.4-mini)
+코드 기본값이 이미 공식 모델입니다. `.env`에 키 3개를 넣고, 제출 점검(`make_submission`)이 확인하는 모델 선택 줄도 함께 넣습니다(예시는 `team/env.example`).
 ```bash
 SONIOX_API_KEY=...
 GEMINI_API_KEY=...
@@ -190,13 +200,14 @@ team/
     policy.py             프롬프트 조립, 발신자·이력, 인계 후보 키워드
     config.py             모든 설정 (환경 변수)
     providers/            stt.py, llm.py, tts.py
-    prompts/              연습용 지침·규칙·고정 문장 ← 11/21 공식 자료로 교체 (prompts/README.md 체크리스트)
+    packs/official/       공식 묶음 (기본): 지침·함수 규칙·고정 문장. 브랜드 자료는 data/brand 에서 읽음
+    prompts/              연습용 묶음 (테스트용)
   devui/                  브라우저 테스트 화면 + 테스트 서버 (개발용, 대회 경로와 분리)
-  mock/mock_api.py        모의 함수 서버
+  mock/mock_api.py        모의 함수 응답 규칙 (MockStore). 제출 경로는 mock_tools/mock_server.py 가 이것을 씀
   scripts/                bench(반복 측정), check_audio(STT·TTS 단독), check_llm, llm_probe(LLM·관문),
                           check_concurrency / check_external(운영 점검), sweep_endpoint(말 끝 실험), make_testset, make_callback_audio
   tests/                  pytest
-  data/                   practice_ko(연습 8문항), endpoint_ko(말 끝 실험 18개), gate_ko(관문 시험), callback_ko(콜백 2턴째 2문항), holdout_ko(튜닝 안 하는 세트)
+  data/                   demo(옛 스타터킷 데모 함수·음성), practice_ko(연습 8문항), endpoint_ko(말 끝 실험 18개), gate_ko(관문 시험), callback_ko(콜백 2턴째 2문항), holdout_ko(튜닝 안 하는 세트)
   docs/                   문서 (아래)
   runs/                   측정 결과
 ```

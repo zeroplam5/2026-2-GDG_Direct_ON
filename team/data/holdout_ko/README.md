@@ -32,5 +32,5 @@
 .venv/Scripts/python -m team.scripts.bench --llm openai_compat --configs default_1100_1800 --repeats 2 \
   --cases team/data/holdout_ko/cases.jsonl --audio team/data/holdout_ko/audio --out team/runs/holdout_<날짜>
 ```
-- 함수 호출 기대값은 연습용 모의 데이터(`data/demo_mock_data.json`의 DEMO1001, DEMO2002, 01000001234) 기준입니다.
+- 함수 호출 기대값은 연습용 모의 데이터(`team/data/demo/demo_mock_data.json`의 DEMO1001, DEMO2002, 01000001234) 기준입니다.
 - 기대 동작 충족 여부는 `results.jsonl`의 응답 텍스트와 함수 호출을 `script.tsv`의 '기대 동작'과 비교해 사람이 판정합니다.

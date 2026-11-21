@@ -81,7 +81,7 @@ def rule(title=""):
 
 
 def load_tools():
-    defs = json.loads((ROOT / "data" / "demo_tools.json").read_text(encoding="utf-8"))
+    defs = json.loads((ROOT / "team" / "data" / "demo" / "demo_tools.json").read_text(encoding="utf-8"))
     return [{"type": "function", "function": d} for d in defs]
 
 
@@ -459,7 +459,7 @@ async def main():
     print(bold("══ LLM 확인 ") + dim("═" * 52))
     print(f" {bold('모델')}    {base.llm_model}  {dim('(' + base.llm_base_url + ')')}")
     print(f" {bold('키')}      {base.llm_api_key_env}: " + (green("있음") if key_ok else red("없음")))
-    print(f" {bold('함수')}    " + ", ".join(t["function"]["name"] for t in tools_raw) + dim("  (data/demo_tools.json)"))
+    print(f" {bold('함수')}    " + ", ".join(t["function"]["name"] for t in tools_raw) + dim("  (team/data/demo/demo_tools.json)"))
     print(f" {bold('규칙')}    {Path(base.rules_path).name}" + dim(f"  지침 {Path(base.prompt_path).name}"))
     if not key_ok and not a.show_prompt:
         print(red("\n 키가 없어 중단합니다. .env의 키 줄을 확인하세요."))

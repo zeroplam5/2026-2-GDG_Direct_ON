@@ -28,12 +28,13 @@ def repo_path(p) -> Path:
     return p if p.is_absolute() else REPO_ROOT / p
 
 
-# The submission zip has no kit folder: make_submission.py puts the brand files in official/brand.
-BRAND_DIR_FALLBACKS = ("official/brand",)
+# Kit layout: data/brand at the repository root (as in directon-2026-voice-cs and the submission
+# zip). Fallback for a checkout that only has the unpacked kit folder next to the code.
+BRAND_DIR_FALLBACKS = ("directon-2026-voice-cs/data/brand",)
 
 
 def brand_path(cfg) -> Path:
-    """cfg.brand_dir if it exists, else the submission zip's official/brand, else cfg.brand_dir
+    """cfg.brand_dir if it exists, else the unpacked kit folder, else cfg.brand_dir
     (missing: the caller warns)."""
     p = repo_path(cfg.brand_dir)
     if p.is_dir():
@@ -69,7 +70,7 @@ class Config:
     audio_base_url: str = "https://api.openai.com/v1"   # used by the openai STT/TTS providers
     audio_api_key_env: str = "OPENAI_API_KEY"
 
-    stt_provider: str = "openai"           # openai | soniox | faster_whisper | fake
+    stt_provider: str = "soniox"           # official (kit README): soniox. Others: openai | faster_whisper | fake
     stt_model: str = "gpt-4o-mini-transcribe"
     stt_language: str = "ko"
     stt_prompt: str = "건강기능식품 쇼핑몰 고객센터 전화 상담. 주문번호 같은 코드는 영문 대문자와 숫자로 적는다."  # practice hint
@@ -112,7 +113,7 @@ class Config:
     llm_reasoning_effort: str = "auto"     # auto -> "none" for gpt-5.x (5.1+), "minimal" for gpt-5 / o*, else not sent
     llm_timeout_s: float = 12.0
 
-    tts_provider: str = "openai"           # openai | gemini | sapi (Windows, local) | tone (test double)
+    tts_provider: str = "gemini"           # official (kit README): gemini. Others: openai | sapi (Windows, local) | tone (test double)
     tts_model: str = "gpt-4o-mini-tts"
     tts_voice: str = "coral"
     tts_instructions: str = "차분하고 친절한 한국어 전화 상담원 말투. 또렷하고 약간 빠르게 말한다."
@@ -123,7 +124,7 @@ class Config:
     # gemini provider (11/21 official TTS). Output is 24 kHz s16le mono PCM per the docs
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     gemini_api_key_env: str = "GEMINI_API_KEY"
-    gemini_tts_model: str = "gemini-2.5-flash-preview-tts"
+    gemini_tts_model: str = "gemini-3.8-flash-lite-tts"  # official (kit README)
     gemini_tts_voice: str = "Kore"
     gemini_tts_style: str = ""             # optional prefix prompt, e.g. "친절한 상담원 말투로 읽어 주세요:" (may be read aloud - test first)
     gemini_tts_stream: bool = False        # streamGenerateContent (not shown in the docs for TTS - test before enabling)
@@ -143,10 +144,10 @@ class Config:
     # a pack folder with pack.json sets prompt_path / rules_path / phrases_path at once
     # (practice pack: team/agent/prompts). Individually set AGENT_*_PATH values still win.
     pack_dir: str = ""
-    # official brand material (day kit data/brand: scenarios.md, information.json, style.json),
+    # official brand material (kit layout data/brand: scenarios.md, information.json, style.json),
     # appended to the prompt at startup. Not in git (the kit data must not be published).
     # Relative = from the repository root. Missing folder = prompt without brand material (warning).
-    brand_dir: str = "directon-2026-voice-cs/data/brand"
+    brand_dir: str = "data/brand"
     # pre-execution gate (team/agent/gate.py): code checks format, grounding and customer consent
     # before a function call is sent
     tool_gate: bool = True

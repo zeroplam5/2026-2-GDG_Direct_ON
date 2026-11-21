@@ -1,12 +1,16 @@
 """Build the submission zip (official README 7장) and run the pre-submission check.
 
-    python -m team.scripts.make_submission --official <공식 자료 폴더> [--out submission.zip] [--check] [--real]
+    python -m team.scripts.make_submission [--official <키트 폴더>] [--out submission.zip] [--check] [--real]
 
-Zip contents
+--official: a folder laid out like the kit (data/brand/..., data/mock_db.json). Default: the
+repository root when its data/ holds the kit data, else directon-2026-voice-cs.
+
+Zip contents (same layout as the official kit directon-2026-voice-cs)
   * every COMMITTED file of HEAD (git archive) - uncommitted changes are NOT included (warned)
-  * official/tools.json, official/mock_db.json, official/brand/{scenarios.md, information.json,
-    style.json}  from the official kit (not in the repository:
-    contest data must not leave the event; it goes only into the zip handed to the organisers)
+  * data/brand/{tools.json, scenarios.md, information.json, style.json} and data/mock_db.json
+    from the kit, at the kit's own paths (not in the repository: contest data must not leave
+    the event; it goes only into the zip handed to the organisers). Practice cases and audio
+    are not packed.
   * .env (API keys) if present - warned if missing
   top level: start_server.sh, start_mock.sh, requirements.txt (README 7장)
 
@@ -81,13 +85,13 @@ def build(a) -> Path:
     sh(["git", "archive", "--format=zip", "-o", str(out), "HEAD"], cwd=REPO)
     env = REPO / ".env" if not a.env else Path(a.env)
     with zipfile.ZipFile(out, "a", zipfile.ZIP_DEFLATED) as z:
-        z.write(tools, "official/tools.json")
-        z.write(db, "official/mock_db.json")
-        # brand material for the prompt (config.brand_path finds it at official/brand)
+        z.write(tools, "data/brand/tools.json")   # mock_tools/mock_server.py default (kit layout)
+        z.write(db, "data/mock_db.json")           # start_mock.sh default data file (kit layout)
+        # brand material for the prompt (config.brand_dir = data/brand)
         brand = kit / "data" / "brand"
         for name in ("scenarios.md", "information.json", "style.json"):
             if (brand / name).is_file():
-                z.write(brand / name, f"official/brand/{name}")
+                z.write(brand / name, f"data/brand/{name}")
             else:
                 print(f"주의: 공식 자료에 {brand / name} 가 없어 지침에 브랜드 자료가 빠집니다", file=sys.stderr)
         if env.exists():
@@ -97,9 +101,14 @@ def build(a) -> Path:
         else:
             print(f"주의: {env} 가 없어 키 없이 압축했습니다 (제출 때는 .env 필요)", file=sys.stderr)
         names = z.namelist()
+        # bash on the Linux container fails on CRLF ($'\r'): .gitattributes keeps *.sh LF in git archive
+        crlf = [n for n in names if n.endswith(".sh") and b"\r" in z.read(n)]
     top = {"start_server.sh", "start_mock.sh", "requirements.txt"}
     if not top <= set(names):
         sys.exit("압축 맨 위에 없는 파일: " + ", ".join(sorted(top - set(names))))
+    if crlf:
+        sys.exit("CRLF 줄바꿈인 .sh 파일 (리눅스 bash 에서 실패): " + ", ".join(crlf)
+                 + " -> .gitattributes 를 커밋했는지 확인")
     bad = [n for n in names if n.startswith((".venv/", "venv/")) or "/__pycache__/" in n]
     print(f"압축: {out} ({out.stat().st_size / 1e6:.1f} MB, 파일 {len(names)}개)"
           + (f", 넣으면 안 되는 파일 {len(bad)}개" if bad else ""))
@@ -125,7 +134,7 @@ def check(a, zpath: Path):
     print(f"[1] 새 폴더에 풀기: {app}")
     venv = work / "venv"
     sh([a.python, "-m", "venv", str(venv)])
-    py = venv / "bin" / "python"
+    py = venv / "bin" / "python" if (venv / "bin").is_dir() else venv / "Scripts" / "python.exe"
     ver = sh([str(py), "-c", "import sys;print(sys.version.split()[0])"]).stdout.strip()
     r = subprocess.run([str(py), "-m", "pip", "install", "-q", "-r", "requirements.txt"], cwd=app,
                        capture_output=True, text=True)
@@ -133,7 +142,7 @@ def check(a, zpath: Path):
     if r.returncode:
         print(r.stderr[-1500:])
         return False
-    env = {**os.environ, "PATH": f"{venv / 'bin'}{os.pathsep}{os.environ['PATH']}", "PYTHONUNBUFFERED": "1"}
+    env = {**os.environ, "PATH": f"{py.parent}{os.pathsep}{os.environ['PATH']}", "PYTHONUNBUFFERED": "1"}
     if not a.real:
         cases = {}
         for line in (kit / "data" / "practice_cases.jsonl").read_text(encoding="utf-8").splitlines():
@@ -205,7 +214,8 @@ def check(a, zpath: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--official", required=True, help="압축을 푼 공식 자료 폴더 (directon-2026-voice-cs)")
+    ap.add_argument("--official", default=None,
+                    help="키트 배치의 자료 폴더 (기본: 저장소 맨 위 data/ 에 키트 자료가 있으면 저장소, 없으면 directon-2026-voice-cs)")
     ap.add_argument("--out", default="submission.zip")
     ap.add_argument("--env", default=None, help="넣을 .env (기본: 저장소 루트의 .env)")
     ap.add_argument("--check", action="store_true", help="README 7장 제출 전 확인까지 실행")
@@ -215,6 +225,8 @@ def main():
     ap.add_argument("--limit", type=int, default=5)
     ap.add_argument("--keep", action="store_true", help="통과해도 점검 폴더를 지우지 않음")
     a = ap.parse_args()
+    if not a.official:
+        a.official = str(REPO if (REPO / "data" / "mock_db.json").is_file() else REPO / "directon-2026-voice-cs")
     z = build(a)
     if a.check:
         sys.exit(0 if check(a, z) else 1)

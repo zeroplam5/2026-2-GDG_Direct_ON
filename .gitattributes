@@ -1,0 +1,5 @@
+# 제출 압축(git archive)과 리눅스 컨테이너에서 bash 로 실행되는 파일은 항상 LF.
+# core.autocrlf=true 인 Windows 에서 CRLF 로 나가면 bash start_server.sh 가 시작되지 않는다.
+*.sh text eol=lf
+*.py text eol=lf
+requirements*.txt text eol=lf

@@ -49,7 +49,7 @@ def main():
     base.mkdir(parents=True, exist_ok=True)
     meta = json.load(open(ROOT / a.audio / "meta.json", encoding="utf-8"))
 
-    mock = subprocess.Popen([sys.executable, "-u", "mock_tools/mock_api_template.py", "--port", "8199"],
+    mock = subprocess.Popen([sys.executable, "-u", "-m", "team.mock.mock_api", "--port", "8199"],
                             cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     time.sleep(1)
 

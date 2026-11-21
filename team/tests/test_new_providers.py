@@ -91,7 +91,7 @@ def test_gemini_tts_resamples_24k_to_16k(monkeypatch):
     out = asyncio.run(tts.synth("안녕하세요"))
     assert abs(len(out) - 32000) <= 64  # 1 s @ 16 kHz
     path, key, body = seen[0]
-    assert path.endswith("/models/gemini-2.5-flash-preview-tts:generateContent") and key == "g-key"
+    assert path.endswith("/models/gemini-3.8-flash-lite-tts:generateContent") and key == "g-key"
     assert body["generationConfig"]["responseModalities"] == ["AUDIO"]
     assert body["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Kore"
     assert body["contents"][0]["parts"][0]["text"] == "안녕하세요"
