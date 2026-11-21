@@ -151,6 +151,9 @@ class Config:
     # pre-execution gate (team/agent/gate.py): code checks format, grounding and customer consent
     # before a function call is sent
     tool_gate: bool = True
+    # the KULLM gateway masks phone / order numbers in user messages ("[PHONE]"): send them to the
+    # model as slot names with a table in the system message (team/agent/number_slots.py)
+    number_slots: bool = True
     # output check (team/agent/output_guard.py) on every model sentence before TTS:
     # log = record numbers found nowhere in prompt / customer words / function results,
     # block = replace such a sentence with phrases["unverified_fallback"], off = skip

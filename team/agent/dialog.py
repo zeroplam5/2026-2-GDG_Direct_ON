@@ -23,6 +23,7 @@ import json
 import time
 
 from . import policy
+from .number_slots import NumberSlots
 from .output_guard import OutputGuard
 from .textutil import SentenceSplitter
 
@@ -81,6 +82,9 @@ class Dialog:
         # the customer's words in the session.start history ("고객: …" lines of the context)
         self.customer_history = "\n".join(ln[3:] for ln in (context or "").splitlines() if ln.startswith("고객:"))
         self.messages: list[dict] = [{"role": "system", "content": content}]
+        # KULLM masks phone / order numbers in user messages: send them as slot names (number_slots.py).
+        # self.messages always keeps the real values.
+        self.slots = NumberSlots() if getattr(cfg, "number_slots", True) else None
         self._acks = ack_phrases(phrases)
         self._ack_i = 0  # rotate so the same phrase is not repeated turn after turn
         self.debug = None  # optional callable(kind, **data); set only by the devui test server
@@ -120,8 +124,17 @@ class Dialog:
         return "\n".join([self.customer_history] + [str(msg.get("content") or "") for msg in self.messages
                                                     if msg["role"] == "user"])
 
+    def _outgoing(self) -> list[dict]:
+        """What is sent to the provider (slot names for numbers in user messages)."""
+        return self.slots.outgoing(self.messages) if self.slots else self.messages
+
+    def _real(self, text):
+        """Slot names the model wrote -> real values."""
+        return self.slots.decode(text) if self.slots else text
+
     def _checked(self, sentence: str, m: dict, said: list[str]) -> str:
         """Output check; returns "" when the sentence must not be said (e.g. already said)."""
+        sentence = self._real(sentence)
         out, flag = self.guard.check(sentence, self._sources(), said, self._results(), policy=self.static,
                                      customer=self._customer_words())
         if flag:
@@ -151,7 +164,7 @@ class Dialog:
             t_req = time.perf_counter()
             m["llm_rounds"] += 1
             self._dbg("llm.round_start", round=rnd)
-            async for kind, val in self.llm.stream(self.messages, tools=schemas or None,
+            async for kind, val in self.llm.stream(self._outgoing(), tools=schemas or None,
                                                    tool_choice="none" if last_round else "auto"):
                 if kind == "text":
                     if "t_llm_first_text" not in m:
@@ -171,6 +184,9 @@ class Dialog:
                 if out:
                     spoke = True
                     yield out
+            text = self._real(text)
+            for c in calls or []:
+                c.arguments = self._real(c.arguments)  # the gate and the function server get real values
             self._dbg("llm.round_end", round=rnd, text=text,
                       tool_calls=[{"name": c.name, "arguments": c.arguments} for c in calls or []])
             if not calls:
