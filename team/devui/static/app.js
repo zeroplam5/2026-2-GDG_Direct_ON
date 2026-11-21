@@ -368,6 +368,7 @@ function onDebug(t, msg, at) {
       break;
     case 'debug.eou':
       t.eou = { msg, at };
+      if (DEMO) demoChime(t);
       if (!t.turnEndAt && t.firstAudioRecvAt == null) {
         setStatus(t, 'thinking', `판정 사유 ${msg.reason} · 발화 ${msg.utt_ms} ms · 무음 ${msg.silence_ms} ms`
           + (msg.reuse_speculative_stt ? ' · 미리 실행한 STT 결과 사용' : ''));
@@ -1209,6 +1210,7 @@ function demoTimelineItems(t, full = demoLogFullMode) {
   // the server's own "first audio sent" / "turn.end sent" notes reach the page just after the audio and
   // turn.end themselves, so they are folded into these two lines instead of listed out of order
   const outcome = (t.dbg.find((d) => d.msg.type === 'debug.turn_end_sent') || {}).msg;
+  add(t.chimeAt, 'minor', '입력 확인음', '이 화면에서만 재생 · 대회 서버 소리 아님');
   add(t.firstVoicedRecvAt, 'good', '상담원 첫 소리');
   add(t.turnEndAt, outcome && outcome.outcome && outcome.outcome !== 'ok' ? 'bad' : 'good', '응답 끝',
     [outcome && outcome.outcome && outcome.outcome !== 'ok' ? (OUTCOME_KO[outcome.outcome] || outcome.outcome) : '',
@@ -1600,9 +1602,62 @@ refreshDevices().then(() => {
 });
 
 $('btnStart').onclick = () => { startTest().catch((e) => T && fail(T, `예상하지 못한 오류: ${e.message || e}`)); };
-$('demoBtn').onclick = () => { if (T && !T.finalized) stopTest(); else $('btnStart').onclick(); };
+$('demoBtn').onclick = () => { if (demoChimeOn) chimeContext(); if (T && !T.finalized) stopTest(); else $('btnStart').onclick(); };
 $('demoNew').onclick = demoNewCall;
 $('demoLogCopy').onclick = copyDemoTimeline;
+// input chime (demo page only): a short, soft two-note sound played by the browser when the server decides
+// the customer has finished, so the presenter and the audience hear that the words were taken in. It is not
+// sent by the contest server and does not change any measured time. Web Audio needs a user gesture first:
+// the context is created on the first click of 말하기.
+let demoChimeOn = true;
+try { demoChimeOn = localStorage.getItem('devui.demoChime') !== 'off'; } catch { /* storage blocked: default on */ }
+let chimeCtx = null;
+function chimeContext() {
+  if (!chimeCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    try { chimeCtx = new AC(); } catch { return null; }
+  }
+  if (chimeCtx.state === 'suspended') chimeCtx.resume().catch(() => {});
+  return chimeCtx;
+}
+function playChime() {
+  const ctx = chimeContext();
+  if (!ctx) return false;
+  try {
+    const t0 = ctx.currentTime + 0.01;
+    const out = ctx.createGain();
+    out.gain.value = 0.16;
+    out.connect(ctx.destination);
+    // two sine notes a fifth apart (E6 -> B6), each with a fast attack and a soft exponential decay
+    [[1318.5, 0], [1975.5, 0.09]].forEach(([f, dt]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + dt);
+      g.gain.exponentialRampToValueAtTime(1, t0 + dt + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.32);
+      o.connect(g); g.connect(out);
+      o.start(t0 + dt); o.stop(t0 + dt + 0.34);
+    });
+    return true;
+  } catch { return false; }
+}
+function demoChime(t) {
+  if (!demoChimeOn || t.chimeAt != null || t.turnEndAt) return;   // once per turn
+  if (playChime()) t.chimeAt = performance.now();
+}
+function renderChimeToggle() {
+  $('demoChime').setAttribute('aria-pressed', String(demoChimeOn));
+  $('demoChimeLabel').textContent = demoChimeOn ? '확인음 켬' : '확인음 끔';
+}
+$('demoChime').onclick = () => {
+  demoChimeOn = !demoChimeOn;
+  try { localStorage.setItem('devui.demoChime', demoChimeOn ? 'on' : 'off'); } catch { /* not kept */ }
+  renderChimeToggle();
+  if (demoChimeOn) playChime();   // a preview, and it unlocks audio on this click
+};
+renderChimeToggle();
 $('demoLogFull').onclick = () => demoSetLogMode(true);
 $('demoLogBrief').onclick = () => demoSetLogMode(false);
 // side sheet tabs (WAI-ARIA tabs: click, or arrow keys while a tab has focus)

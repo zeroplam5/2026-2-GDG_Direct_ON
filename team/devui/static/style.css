@@ -372,3 +372,10 @@ body.demo .d-top { max-width: none; width: 100%; margin-left: 0; margin-right: 0
   .d-grid { overflow: clip; }
   .d-tabs { position: sticky; top: 0; z-index: 2; padding-top: 12px; margin-top: -12px; }
 }
+/* input chime toggle (demo page only, plays in the browser) */
+.d-chime { display: inline-flex; align-items: center; gap: 6px; font: 500 15px var(--d-font); padding: 6px 14px;
+  border-radius: 999px; background: none; color: var(--d-muted); border: 1px solid var(--d-line); cursor: pointer; }
+.d-chime[aria-pressed="true"] { color: var(--d-ink); }
+.d-chime[aria-pressed="false"] svg { opacity: .45; }
+.d-chime:focus-visible { outline: 3px solid var(--d-accent-soft); outline-offset: 2px; }
+@media (max-width: 520px) { .d-top-right { flex-wrap: wrap; gap: 10px; } }
