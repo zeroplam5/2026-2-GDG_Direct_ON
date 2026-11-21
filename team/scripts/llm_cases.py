@@ -65,6 +65,9 @@ def tool_match(ref_calls, got_calls, history=()):
     return True, ""
 
 
+RELAY_DELAY_S: dict = {}  # filled by --relay-delay
+
+
 class KitTools:
     """Stands in for tools_url: same contract as ToolsClient (openai_schemas / call). Answers like
     the day kit's SPEC.md mock server: lookups by phone / order number ignoring separators
@@ -92,6 +95,8 @@ class KitTools:
         if name not in self.tools:
             return {"status": "error", "message": "unknown function"}
         self.sent.append({"name": name, "arguments": args})
+        if RELAY_DELAY_S:  # --relay-delay: answer after the evaluator relay's per-function delay
+            await asyncio.sleep(RELAY_DELAY_S.get(name, RELAY_DELAY_S["_default"]))
         for rc, rr in self.ref:
             if rc["name"] == name and (self._ids(rc["arguments"]) & self._ids(args) or name in INFO_FUNCS
                                        or not self._ids(rc["arguments"])):
@@ -222,7 +227,13 @@ def main():
     ap.add_argument("--show", action="store_true", help="print replies, gate blocks and output-check flags")
     ap.add_argument("--out", default="", help="JSONL with replies (kit text: keep out of git)")
     ap.add_argument("--env", default=str(REPO_ROOT / ".env"))
+    ap.add_argument("--relay-delay", action="store_true",
+                    help="each function answers after the evaluator relay's delay (lookup 1.0-1.2 s, search 1.5, "
+                         "callback 0.8, other registrations 1.5), so 첫문장 includes the waits")
     args = ap.parse_args()
+    if args.relay_delay:
+        RELAY_DELAY_S.update({"get_order_info": 1.2, "get_return_info": 1.0, "search_products": 1.5,
+                              "request_callback": 0.8, "_default": 1.5})
     load_env_file(args.env)
     kit = Path(args.kit)
     cases, tools, db = load_kit(kit)

@@ -159,6 +159,9 @@ class Config:
     prefetch: bool = True
     prefetch_max_calls: int = 6            # per session
     prefetch_settle_s: float = 2.0         # longest wait for running prefetches before the first answer audio
+    # a registration that passed the gate: the reply is written while the call runs (as if it succeeded)
+    # and said only when the real result is ok; otherwise it is thrown away and the real result answered
+    write_answer_ahead: bool = True
     # output check (team/agent/output_guard.py) on every model sentence before TTS:
     # log = record numbers found nowhere in prompt / customer words / function results,
     # block = replace such a sentence with phrases["unverified_fallback"], off = skip

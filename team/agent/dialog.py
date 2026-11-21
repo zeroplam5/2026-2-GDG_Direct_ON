@@ -63,6 +63,14 @@ def _gate_note(msg: dict) -> bool:
     return msg.get("role") == "tool" and '"not_executed"' in str(msg.get("content"))
 
 
+class _Prepared:
+    """A reply being written in the background (write_answer_ahead): queued stream events + the task."""
+
+    def __init__(self):
+        self.q: asyncio.Queue = asyncio.Queue()
+        self.task: asyncio.Future | None = None
+
+
 class Dialog:
     def __init__(self, llm, tools, system_prompt: str, cfg, phrases: dict, gate=None, context: str | None = None):
         self.llm = llm
@@ -134,6 +142,43 @@ class Dialog:
         """Slot names the model wrote -> real values."""
         return self.slots.decode(text) if self.slots else text
 
+    def _write_ahead_ok(self, calls, decisions) -> bool:
+        """write_answer_ahead applies to a round with exactly one call: a registration the gate let through."""
+        if not (getattr(self.cfg, "write_answer_ahead", False) and self.gate and len(calls) == 1):
+            return False
+        d = decisions[0]
+        return d is not None and d.allowed and self.gate.spec(calls[0].name).get("kind") == "write"
+
+    def _prepare_reply(self, call, schemas, tool_choice) -> "_Prepared":
+        """Start the next LLM round now, as if `call` returned {"status": "ok"}. Events are queued and
+        read by the next round only if the real result is ok."""
+        prep = _Prepared()
+        msgs = self._outgoing() + [{"role": "tool", "tool_call_id": call.id,
+                                    "content": json.dumps({"status": "ok"}, ensure_ascii=False)}]
+
+        async def pump():
+            try:
+                async for ev in self.llm.stream(msgs, tools=schemas or None, tool_choice=tool_choice):
+                    prep.q.put_nowait(ev)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # raised again in the round that reads the reply
+                prep.q.put_nowait(("__error__", e))
+            finally:
+                prep.q.put_nowait(None)
+        prep.task = asyncio.ensure_future(pump())
+        return prep
+
+    @staticmethod
+    async def _drain(prep: "_Prepared"):
+        while True:
+            ev = await prep.q.get()
+            if ev is None:
+                return
+            if ev[0] == "__error__":
+                raise ev[1]
+            yield ev
+
     async def _settle(self, m: dict):
         """Before the first answer audio: wait until every prefetched lookup has its result
         (the evaluator measures "after tool" from the last function result; no sound after it = 0)."""
@@ -190,6 +235,7 @@ class Dialog:
         m.setdefault("tool_calls", [])
         spoke = False
         said: list[str] = []  # sentences actually said this turn (after the output check)
+        ahead = None  # queue of a reply prepared while a registration was running (write_answer_ahead)
         for rnd in range(self.cfg.max_tool_rounds + 1):
             last_round = rnd == self.cfg.max_tool_rounds
             splitter = SentenceSplitter(early_min_chars=0 if spoke else self.cfg.first_chunk_min_chars)
@@ -197,8 +243,11 @@ class Dialog:
             t_req = time.perf_counter()
             m["llm_rounds"] += 1
             self._dbg("llm.round_start", round=rnd)
-            async for kind, val in self.llm.stream(self._outgoing(), tools=schemas or None,
-                                                   tool_choice="none" if last_round else "auto"):
+            source = (self._drain(ahead) if ahead is not None else
+                      self.llm.stream(self._outgoing(), tools=schemas or None,
+                                      tool_choice="none" if last_round else "auto"))
+            ahead = None
+            async for kind, val in source:
                 if kind == "text":
                     if "t_llm_first_text" not in m:
                         m["t_llm_first_text"] = time.perf_counter()
@@ -254,6 +303,25 @@ class Dialog:
                 spoke = True
                 self._dbg("tool_ack", text=ack)
                 yield Ack(ack)  # the session plays it while the functions below run
+            if self._write_ahead_ok(calls, decisions):
+                # one registration passed the gate: send it, and write the reply at the same time as
+                # if it succeeded. The reply is used only when the real result is ok (it is said after
+                # that result, so nothing is claimed before it); otherwise the next round answers the
+                # real result as usual.
+                c, d = calls[0], decisions[0]
+                q = self._prepare_reply(c, schemas, "none" if rnd + 1 == self.cfg.max_tool_rounds else "auto")
+                t_tools = time.perf_counter()
+                r = await self.tools.call(c.name, json.dumps(d.args, ensure_ascii=False))
+                m["tool_calls"].append({"round": rnd, "ms": round((time.perf_counter() - t_tools) * 1000, 1),
+                                        "calls": [{"name": c.name, "status": r.get("status")}]})
+                self.messages.append({"role": "tool", "tool_call_id": c.id, "content": json.dumps(r, ensure_ascii=False)})
+                if isinstance(r, dict) and r.get("status") == "ok":
+                    ahead, m["write_answer_ahead"] = q, "used"
+                else:
+                    q.task.cancel()
+                    m["write_answer_ahead"] = "discarded"
+                self._dbg("write_answer_ahead", status=r.get("status"), used=ahead is not None)
+                continue
             t_tools = time.perf_counter()
 
             async def run(c, d):

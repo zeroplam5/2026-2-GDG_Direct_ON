@@ -456,6 +456,7 @@ class Session:
             "prefetch": (self.dialog.prefetch.summary()
                          if getattr(self, "dialog", None) and self.dialog.prefetch else None),
             "prefetch_given": m.get("prefetch_given"), "prefetch_wait_ms": m.get("prefetch_wait_ms"),
+            "write_answer_ahead": m.get("write_answer_ahead"),
             "output_flags": [f if self.cfg.log_text else {k: v for k, v in f.items() if k != "values"}
                              for f in m.get("output_flags") or []],
         }
