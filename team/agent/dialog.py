@@ -23,6 +23,8 @@ import json
 import time
 
 from . import policy
+from .number_slots import NumberSlots
+from .prefetch import LOOKUPS
 from .output_guard import OutputGuard
 from .textutil import SentenceSplitter
 
@@ -81,6 +83,10 @@ class Dialog:
         # the customer's words in the session.start history ("고객: …" lines of the context)
         self.customer_history = "\n".join(ln[3:] for ln in (context or "").splitlines() if ln.startswith("고객:"))
         self.messages: list[dict] = [{"role": "system", "content": content}]
+        # KULLM masks phone / order numbers in user messages: send them as slot names (number_slots.py).
+        # self.messages always keeps the real values.
+        self.slots = NumberSlots() if getattr(cfg, "number_slots", True) else None
+        self.prefetch = None  # prefetch.Prefetch, set by session.py: order / return lookups called ahead
         self._acks = ack_phrases(phrases)
         self._ack_i = 0  # rotate so the same phrase is not repeated turn after turn
         self.debug = None  # optional callable(kind, **data); set only by the devui test server
@@ -120,8 +126,42 @@ class Dialog:
         return "\n".join([self.customer_history] + [str(msg.get("content") or "") for msg in self.messages
                                                     if msg["role"] == "user"])
 
+    def _outgoing(self) -> list[dict]:
+        """What is sent to the provider (slot names for numbers in user messages)."""
+        return self.slots.outgoing(self.messages) if self.slots else self.messages
+
+    def _real(self, text):
+        """Slot names the model wrote -> real values."""
+        return self.slots.decode(text) if self.slots else text
+
+    async def _settle(self, m: dict):
+        """Before the first answer audio: wait until every prefetched lookup has its result
+        (the evaluator measures "after tool" from the last function result; no sound after it = 0)."""
+        if self.prefetch and not m.get("_prefetch_settled"):
+            m["_prefetch_settled"] = True
+            t = time.perf_counter()
+            await self.prefetch.settle(getattr(self.cfg, "prefetch_settle_s", 2.0))
+            waited = round((time.perf_counter() - t) * 1000, 1)
+            if waited >= 1:
+                m["prefetch_wait_ms"] = waited
+
+    def _give_prefetched(self, turn_start: int):
+        """Lookups that finished while the customer was speaking go in as function calls + results
+        before the first LLM round, so the model can answer in one round."""
+        given = self.prefetch.ready() if self.prefetch else []
+        if not given:
+            return []
+        ids = [f"prefetch_{turn_start}_{i}" for i in range(len(given))]
+        self.messages.append({"role": "assistant", "content": None, "tool_calls": [
+            {"id": i, "type": "function", "function": {"name": n, "arguments": json.dumps(a, ensure_ascii=False)}}
+            for i, (n, a, _) in zip(ids, given)]})
+        for i, (_, _, r) in zip(ids, given):
+            self.messages.append({"role": "tool", "tool_call_id": i, "content": json.dumps(r, ensure_ascii=False)})
+        return [n for n, _, _ in given]
+
     def _checked(self, sentence: str, m: dict, said: list[str]) -> str:
         """Output check; returns "" when the sentence must not be said (e.g. already said)."""
+        sentence = self._real(sentence)
         out, flag = self.guard.check(sentence, self._sources(), said, self._results(), policy=self.static,
                                      customer=self._customer_words())
         if flag:
@@ -136,6 +176,12 @@ class Dialog:
         m["handoff_flags"] = flags
         turn_start = len(self.messages)
         self.messages.append({"role": "user", "content": policy.user_message(user_text, flags, self.rules)})
+        if self.prefetch:
+            self.prefetch.turn_start(user_text)  # numbers in the customer's words: lookups start now
+            given = self._give_prefetched(turn_start)
+            if given:
+                m["prefetch_given"] = given
+                self._dbg("prefetch.given", names=given)
         schemas = self.tools.openai_schemas()
         if self.gate:
             schemas = self.gate.augment(schemas)
@@ -151,7 +197,7 @@ class Dialog:
             t_req = time.perf_counter()
             m["llm_rounds"] += 1
             self._dbg("llm.round_start", round=rnd)
-            async for kind, val in self.llm.stream(self.messages, tools=schemas or None,
+            async for kind, val in self.llm.stream(self._outgoing(), tools=schemas or None,
                                                    tool_choice="none" if last_round else "auto"):
                 if kind == "text":
                     if "t_llm_first_text" not in m:
@@ -162,6 +208,7 @@ class Dialog:
                     for s in splitter.push(val):
                         out = self._checked(s, m, said)
                         if out:
+                            await self._settle(m)
                             spoke = True
                             yield out
                 elif kind == "tool_calls" and not last_round:
@@ -169,13 +216,18 @@ class Dialog:
             for s in splitter.flush():
                 out = self._checked(s, m, said)
                 if out:
+                    await self._settle(m)
                     spoke = True
                     yield out
+            text = self._real(text)
+            for c in calls or []:
+                c.arguments = self._real(c.arguments)  # the gate and the function server get real values
             self._dbg("llm.round_end", round=rnd, text=text,
                       tool_calls=[{"name": c.name, "arguments": c.arguments} for c in calls or []])
             if not calls:
                 if not text.strip():  # model returned nothing speakable
                     text = self.phrases["tool_round_limit"]
+                    await self._settle(m)
                     yield text
                     said.append(text)
                 # history keeps what the customer actually heard this turn
@@ -205,11 +257,14 @@ class Dialog:
             t_tools = time.perf_counter()
 
             async def run(c, d):
-                if d is None:
-                    return await self.tools.call(c.name, c.arguments)
-                if not d.allowed:
+                if d is not None and not d.allowed:
                     return d.result()  # blocked: nothing is sent to tools_url
-                return await self.tools.call(c.name, json.dumps(d.args, ensure_ascii=False))
+                args_json = c.arguments if d is None else json.dumps(d.args, ensure_ascii=False)
+                if self.prefetch and c.name in LOOKUPS:  # already called ahead: wait for that call
+                    got = await self.prefetch.serve(c.name, args_json)
+                    if got is not None:
+                        return got
+                return await self.tools.call(c.name, args_json)
 
             results = await asyncio.gather(*(run(c, d) for c, d in zip(calls, decisions)))
             m["tool_calls"].append({"round": rnd, "ms": round((time.perf_counter() - t_tools) * 1000, 1),
@@ -226,7 +281,9 @@ class Dialog:
                     return
                 if how == "template":
                     self.messages.append({"role": "assistant", "content": sentence})
+                    await self._settle(m)
                     yield sentence
                     return
                 # "model": the model sees not_executed and words the reply in the next round
+        await self._settle(m)
         yield self.phrases["tool_round_limit"]

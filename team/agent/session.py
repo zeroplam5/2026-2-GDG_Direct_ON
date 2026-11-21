@@ -24,6 +24,7 @@ from .audio import FRAME_BYTES, FRAME_MS, RATE, FrameAssembler, chunk, resample,
 from .dialog import Ack, Dialog
 from .endpointing import Endpointer
 from .gate import Gate
+from .prefetch import Prefetch
 from .providers.stt import STTResult
 from .soniox_stream import SonioxStream
 from .textutil import looks_complete, normalize_for_tts
@@ -107,6 +108,15 @@ class Session:
                              gate=Gate.from_config(self.cfg, start) if self.cfg.tool_gate else None,
                              context=policy.build_context(start))
         self.tools_ready = tools_task
+        if self.cfg.prefetch:  # order / return lookups called ahead (prefetch.py), never registrations
+            pf = Prefetch(self.tools, getattr(self.app, "rules", None), start.get("history"), start.get("caller"),
+                          max_calls=self.cfg.prefetch_max_calls)
+            self.dialog.prefetch = pf
+
+            async def prefetch_at_start():
+                await asyncio.shield(tools_task)  # only functions listed by GET /tools are ever sent
+                pf.session_start()
+            self.prefetch_task = asyncio.create_task(prefetch_at_start())
         if self.debug:
             self.tools.debug = self._dbg
             self.dialog.debug = self._dbg
@@ -139,9 +149,11 @@ class Session:
             log.info("[%s] connection ended: %s", self.sid, type(e).__name__)
         finally:
             self.closed = True
-            for t in (self.stt_task, self.resp_task, tools_task):
+            for t in (self.stt_task, self.resp_task, tools_task, getattr(self, "prefetch_task", None)):
                 if t and not t.done():
                     t.cancel()
+            if getattr(self, "dialog", None) and self.dialog.prefetch:
+                self.dialog.prefetch.cancel()
             if self.stream:
                 await self.stream.close()
 
@@ -441,6 +453,9 @@ class Session:
             # what the code checks decided (gate: name / allowed / reason only, no arguments);
             # output-check values (the numbers / time words) only with log_text
             "gate": m.get("gate"), "blocked_reply": m.get("blocked_reply"),
+            "prefetch": (self.dialog.prefetch.summary()
+                         if getattr(self, "dialog", None) and self.dialog.prefetch else None),
+            "prefetch_given": m.get("prefetch_given"), "prefetch_wait_ms": m.get("prefetch_wait_ms"),
             "output_flags": [f if self.cfg.log_text else {k: v for k, v in f.items() if k != "values"}
                              for f in m.get("output_flags") or []],
         }
