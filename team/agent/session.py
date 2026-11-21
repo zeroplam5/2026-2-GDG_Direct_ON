@@ -18,6 +18,13 @@ VAD until the first voiced audio of the reply is sent. If the customer starts sp
 of that turn is rolled back, and the previous utterance + the new audio are endpointed again as
 one utterance. Not done once a function call was sent to tools_url this turn (it would be
 recorded twice), nor after the first sound (no barge-in).
+
+stt_stream (opt-in, eou_mode=vad + stt_provider=soniox): a Soniox stream transcribes every frame
+while the customer speaks. End of utterance is still the local VAD above (the completeness check
+reads the stream's current text instead of a speculative STT). At the commit the stream is
+finalized and its text is the transcript: no speculative / batch STT, and after a resume no audio
+is sent again. The stream text is kept until the first sound of the reply (or the turn end), so a
+resumed utterance gets the first and the second part. Stream not connected / failed: as before.
 """
 from __future__ import annotations
 
@@ -45,6 +52,19 @@ class ProtocolError(Exception):
     pass
 
 
+class STTTimeout(Exception):
+    """STT took longer than stt_timeout_s (recorded as outcome=stt_timeout, not budget_timeout)."""
+
+
+def _is_timeout(e: BaseException) -> bool:
+    # asyncio / websockets (TimeoutError), openai.APITimeoutError, httpx.TimeoutException
+    return isinstance(e, TimeoutError) or "Timeout" in type(e).__name__
+
+
+def _ignore(*_a):
+    pass
+
+
 class Session:
     def __init__(self, ws, app):
         self.ws = ws
@@ -68,7 +88,8 @@ class Session:
         # (team.agent.server); only team.devui sets it. When None nothing extra is sent.
         self.debug = None
         self.t0 = time.perf_counter()
-        self.stream: SonioxStream | None = None  # only with cfg.eou_mode == "soniox_stream"
+        self.stream: SonioxStream | None = None  # cfg.eou_mode == "soniox_stream" or cfg.stt_stream
+        self.stt_stream = False                  # the stream only transcribes (VAD decides the end)
         self.stream_end: str | None = None       # text of a "<end>" not acted on yet
         # resume_before_audio: committed utterance audio and frames heard since the commit
         self.resp_prev_audio = b""
@@ -157,6 +178,19 @@ class Session:
                 log.warning("[%s] eou_mode=soniox_stream unavailable (%s); using local VAD", self.sid, e)
                 self.stream = None
             self._dbg("eou_mode", mode="soniox_stream" if self.stream else "vad (fallback)")
+        elif self.cfg.stt_stream:
+            if self.cfg.eou_mode == "vad" and self.cfg.stt_provider == "soniox":
+                try:  # "<end>" ignored: the local VAD decides the end of the utterance
+                    self.stream = SonioxStream(self.cfg, _ignore, _ignore, self.sid)
+                    self.stream.start()
+                    self.stt_stream = True
+                except Exception as e:  # no key etc. -> speculative + batch STT for this session
+                    log.warning("[%s] stt_stream unavailable (%s); using batch STT", self.sid, e)
+                    self.stream = None
+            else:
+                log.warning("[%s] stt_stream needs eou_mode=vad and stt_provider=soniox (got %s / %s): off",
+                            self.sid, self.cfg.eou_mode, self.cfg.stt_provider)
+            self._dbg("stt_stream", active=self.stt_stream)
         try:
             async for msg in self.ws:
                 if isinstance(msg, (bytes, bytearray)):
@@ -213,10 +247,11 @@ class Session:
         sil = self.ep.silence_ms
         if sil == 0:
             self.m["t_last_speech"] = now
-        if self.stream and self.stream.ok:
+        if self.stream and self.stream.ok and not self.stt_stream:
             self._on_frame_stream(sil, now)
             return
-        if sil >= self.cfg.stt_trigger_silence_ms and self.stt_task is None:
+        streaming = self._stt_stream_ok()
+        if not streaming and sil >= self.cfg.stt_trigger_silence_ms and self.stt_task is None:
             self.stt_version = self.ep.version
             self.m["t_stt_start"] = now
             self.stt_task = asyncio.create_task(self._stt(self.ep.utterance_audio()))
@@ -227,13 +262,18 @@ class Session:
             reason = "max_utterance"
         elif sil >= self.cfg.max_silence_ms:
             reason = "max_silence"
-        elif self.cfg.semantic_eou and sil >= self.cfg.complete_silence_ms and self.stt_task and self.stt_task.done() \
-                and not self.stt_task.cancelled() and self.stt_task.exception() is None:
-            res = self.stt_task.result()
-            c = looks_complete(res.text)
-            self.m["completeness"] = c
-            if c is True:
-                reason = "complete_text"
+        elif self.cfg.semantic_eou and sil >= self.cfg.complete_silence_ms:
+            text = None
+            if streaming:  # the same check on what the stream has heard so far
+                text = self.stream.text()
+            elif self.stt_task and self.stt_task.done() and not self.stt_task.cancelled() \
+                    and self.stt_task.exception() is None:
+                text = self.stt_task.result().text
+            if text is not None:
+                c = looks_complete(text)
+                self.m["completeness"] = c
+                if c is True:
+                    reason = "complete_text"
         if reason:
             self._commit(reason, now)
 
@@ -322,6 +362,26 @@ class Session:
             self.m["resumes"] = self.m.get("resumes", 0) + 1
             self._dbg("soniox", event="resume")
 
+    def _stt_stream_ok(self) -> bool:
+        return self.stt_stream and self.stream is not None and self.stream.ok
+
+    async def _stream_stt(self, audio: bytes, m: dict):
+        """Transcript of this utterance from the stream (stt_stream). Empty text -> batch STT."""
+        t = time.perf_counter()
+        m["t_stt_start"] = t
+        status = await self.stream.finalize(self.cfg.stream_finalize_ms / 1000)
+        text = self.stream.text()
+        m["stream_finalize"] = status
+        ms = (time.perf_counter() - t) * 1000
+        self._dbg("stt", source="stream", text=text, ms=round(ms, 1), finalize=status)
+        if not text:
+            m["t_stt_start"] = time.perf_counter()
+            return await self._stt(audio)  # stt_source stays "batch"
+        m["t_stt_end"] = time.perf_counter()
+        m["stt_ms"] = round(ms, 1)
+        m["stt_source"] = "stream"
+        return STTResult(text, ms, {"source": "stream", "finalize": status})
+
     async def _stt(self, pcm: bytes):
         res = await self.app.stt.transcribe(pcm, {"case_id": self.case_id, "session_id": self.sid})
         self.m["t_stt_end"] = time.perf_counter()
@@ -333,18 +393,26 @@ class Session:
         self.turn_idx += 1
         self.m.update(t_commit=now, eou_reason=reason, utt_ms=self.ep.utt_ms, silence_at_commit_ms=self.ep.silence_ms)
         audio = self.ep.utterance_audio()
-        if self.cfg.resume_before_audio and self.cfg.eou_mode == "vad" and self.stream is None:
+        if self.cfg.resume_before_audio and self.cfg.eou_mode == "vad" and (self.stream is None or self.stt_stream):
             self.resp_listen = True
             self.resp_prev_audio, self.resp_heard = bytes(self.ep.utt), bytearray()
             tools = getattr(self, "tools", None)
             self.m["_writes_sent_at_commit"] = tools.sent_writes if tools else 0
-        stt_task = self.stt_task if (self.stt_task and self.stt_version == self.ep.version) else None
-        if stt_task is None and self.stt_task:
-            self.stt_task.cancel()
-        self.stt_task = None
+        from_stream = self._stt_stream_ok()
+        if from_stream:  # the stream heard it all (also both parts after a resume)
+            if self.stt_task:  # speculative STT from before the stream connected
+                self.stt_task.cancel()
+            self.stt_task = None
+            stt_task = asyncio.create_task(self._stream_stt(audio, self.m))
+        else:
+            stt_task = self.stt_task if (self.stt_task and self.stt_version == self.ep.version) else None
+            if stt_task is None and self.stt_task:
+                self.stt_task.cancel()
+            self.stt_task = None
         self.ep.reset()
         self._dbg("eou", reason=reason, utt_ms=self.m.get("utt_ms"), silence_ms=self.m.get("silence_at_commit_ms"),
-                  completeness=self.m.get("completeness"), reuse_speculative_stt=stt_task is not None,
+                  completeness=self.m.get("completeness"), reuse_speculative_stt=stt_task is not None and not from_stream,
+                  stt_from_stream=from_stream,
                   t_last_speech_ms=self._rel(self.m.get("t_last_speech")), t_commit_ms=self._rel(now))
         self.responding = True
         self.resp_task = asyncio.create_task(self._respond(stt_task, audio, self.m))
@@ -388,7 +456,12 @@ class Session:
                     if stt_task is None:
                         m["t_stt_start"] = time.perf_counter()
                         stt_task = asyncio.create_task(self._stt(audio))
-                    res = await stt_task
+                    try:
+                        res = await stt_task
+                    except Exception as e:
+                        if _is_timeout(e):
+                            raise STTTimeout(type(e).__name__) from e
+                        raise
                     m["t_stt_ready"] = time.perf_counter()
                     user_text = res.text
                     self._dbg("stt.final", text=user_text)
@@ -409,6 +482,11 @@ class Session:
                     await self._pipeline(self.dialog.run_turn(user_text, m, said_first=first[0] if first else None),
                                          m, spoken, reply)
                     m["outcome"] = "ok"
+            except STTTimeout as e:
+                m["outcome"] = "stt_timeout"
+                log.warning("[%s] STT timed out (%s, stt_timeout_s=%.1f)", self.sid, e, self.cfg.stt_timeout_s)
+                if not spoken["n"]:
+                    await self._speak_cached("delay_fallback", m, spoken)
             except TimeoutError:
                 if "t_stt_ready" not in m:
                     # speech-to-text did not finish (stt_timeout_s or the turn budget): nothing was
@@ -549,7 +627,7 @@ class Session:
             async for pcm in self.app.tts.stream(norm):
                 if first:
                     m.setdefault("tts_ms", []).append(round((time.perf_counter() - t) * 1000, 1))
-                    m["_out_started"] = True  # from here on the reply is no longer cancelled
+                    self._out_start(m)  # from here on the reply is no longer cancelled
                     if self.cfg.send_transcript_event:
                         await self._send_json({"type": "agent.transcript", "text": text})
                     first = False
@@ -568,11 +646,19 @@ class Session:
         await self._send_audio(self.app.phrases[key], pcm, m, spoken)
 
     async def _send_audio(self, text: str, pcm: bytes, m: dict, spoken: dict):
-        m["_out_started"] = True  # the transcript goes out right before the audio
+        self._out_start(m)  # the transcript goes out right before the audio
         if self.cfg.send_transcript_event:
             await self._send_json({"type": "agent.transcript", "text": text})
         await self._send_pcm(pcm, m)
         spoken["n"] += 1
+
+    def _out_start(self, m: dict):
+        """The reply starts to go out: it is no longer cancelled by a resume, so with stt_stream the
+        stream text of this utterance is done with (kept until now so a resume gets both parts)."""
+        if not m.get("_out_started"):
+            m["_out_started"] = True
+            if self.stt_stream and self.stream:
+                self.stream.clear()
 
     async def _send_pcm(self, pcm: bytes, m: dict):
         if not m.get("_voiced_started"):
@@ -580,7 +666,8 @@ class Session:
             pcm = trim_leading_silence(pcm)
             if not pcm:
                 return
-            m["_voiced_started"] = m["_out_started"] = True
+            m["_voiced_started"] = True
+            self._out_start(m)
         if self.in_rate != RATE:
             pcm = resample(pcm, RATE, self.in_rate)
         size = self.in_rate * 2 * self.cfg.output_chunk_ms // 1000
@@ -631,7 +718,9 @@ class Session:
         row = {
             "session_id": self.sid, "case_id": self.case_id, "turn": self.turn_idx,
             "eou_reason": m.get("eou_reason"), "completeness": m.get("completeness"),
-            "eou_mode": "soniox_stream" if self.stream else "vad", "stt_source": m.get("stt_source", "batch"),
+            "eou_mode": "soniox_stream" if self.stream and not self.stt_stream else "vad",
+            "stt_source": m.get("stt_source", "batch"), "stt_stream": self.stt_stream,
+            "stream_finalize": m.get("stream_finalize"), "stt_ready_ms_rel": rel("t_stt_ready"),
             "soniox_end_ms_rel": rel("t_soniox_end"),
             "resumes": m.get("resumes", 0), "utt_ms": m.get("utt_ms"),
             "resumed_after_commit": m.get("resumed_after_commit", 0), "resume_blocked": m.get("resume_blocked"),

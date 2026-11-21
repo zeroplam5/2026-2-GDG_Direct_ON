@@ -59,7 +59,8 @@ HELLO_FIELDS = ("stt_provider", "stt_model", "llm_provider", "llm_model", "tts_p
                 "complete_silence_ms", "max_silence_ms", "max_utterance_ms", "turn_budget_s", "tool_timeout_s",
                 "output_pacing", "send_transcript_event", "tool_gate", "output_guard", "output_guard_strict", "tool_ack",
                 "first_chunk_min_chars", "pack_dir", "eou_mode", "soniox_max_endpoint_delay_ms",
-                "soniox_min_silence_ms", "soniox_fallback_silence_ms")
+                "soniox_min_silence_ms", "soniox_fallback_silence_ms", "stt_stream", "stream_finalize_ms",
+                "resume_before_audio", "stt_timeout_s")
 
 
 def _response(status: int, reason: str, body: bytes, ctype: str) -> Response:
