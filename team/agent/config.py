@@ -67,6 +67,12 @@ class Config:
     # Speech that starts again (min_speech_ms) cancels the prepared reply (unless a function call
     # was already sent this turn) and both parts are endpointed again as one utterance.
     resume_before_audio: bool = False      # off by default
+    # cushion phrase: when nothing has been said yet this long after the end of the customer's speech
+    # (the official speed reference point), say a short pre-synthesized phrase once, then the answer.
+    # Only slow turns get it (the contest site discourages starting every reply with a filler).
+    cushion: bool = True
+    cushion_after_s: float = 5.0
+    cushion_text: str = "오래 기다려 주셔서 감사합니다."   # phrases.json "cushion" wins when present
 
     # ── providers ──────────────────────────────────────────────────────────
     # Defaults = models fixed for the event: gpt-4o-mini-transcribe / gpt-4.1 (or gpt-5, gpt-4o-mini) /

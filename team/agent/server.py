@@ -41,6 +41,7 @@ class App:
             log.warning("no brand material at %s (set AGENT_BRAND_DIR to the kit's data/brand)", brand_dir)
         self.prompt_template = policy.compose_prompt(policy.load_prompt(cfg.prompt_path), self.brand)
         self.phrases = policy.load_phrases(cfg.phrases_path)
+        self.cushion_text = str(self.phrases.get("cushion") or cfg.cushion_text)
         self.rules = policy.load_rules(cfg.rules_path)  # the one rules file (gate, hand-off, prompt section)
         t = time.perf_counter()
         self.stt = make_stt(cfg)
@@ -60,6 +61,11 @@ class App:
                 self.cached[k] = await self.tts.synth(self.phrases[k])
             except Exception as e:
                 log.warning("pre-synthesis of %r failed (%s); will synthesize on demand", k, type(e).__name__)
+        if self.cfg.cushion:
+            try:
+                self.cached["cushion"] = await self.tts.synth(normalize_for_tts(self.cushion_text))
+            except Exception as e:
+                log.warning("pre-synthesis of cushion failed (%s); the cushion phrase is skipped", type(e).__name__)
         from .dialog import ack_phrases
         for text in (ack_phrases(self.phrases) if self.cfg.tool_ack else []):
             try:

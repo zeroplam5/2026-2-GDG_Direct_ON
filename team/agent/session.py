@@ -62,6 +62,7 @@ class Session:
         self.turn_idx = 0
         self.m: dict = {}
         self.closed = False
+        self._send_lock = asyncio.Lock()  # one audio clip at a time (cushion vs reply)
         self.ignored_frames_while_responding = 0
         # Optional debug sink (callable taking a dict). None on the competition server path
         # (team.agent.server); only team.devui sets it. When None nothing extra is sent.
@@ -347,6 +348,7 @@ class Session:
         if prev is not None and not prev.done():  # let a cancelled reply roll back its history first
             await asyncio.wait([prev])
         hist_len = len(self.dialog.messages)
+        cushion = asyncio.create_task(self._cushion(m)) if self.cfg.cushion and "cushion" in self.app.cached else None
         try:
             try:
                 async with asyncio.timeout(self.cfg.turn_budget_s):
@@ -385,6 +387,12 @@ class Session:
                 if not spoken["n"]:
                     await self._speak_cached("error_fallback", m, spoken)
         finally:
+            if cushion is not None:
+                if m.get("cushion"):        # already being said: let it finish before turn.end
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(cushion)
+                else:
+                    cushion.cancel()
             if not m.get("_resumed"):  # a resumed turn sends no turn.end and writes no metrics row
                 self._stop_listening()
                 await self._send_json({"type": "turn.end"})
@@ -394,6 +402,24 @@ class Session:
                 if self.stream:
                     self.stream.clear()  # tokens heard while the agent spoke are not the next utterance
                 self._write_metrics(m, user_text, " ".join(reply))
+
+    async def _cushion(self, m: dict):
+        """Say the cushion phrase once if nothing has been said cushion_after_s after the end of the
+        customer's speech. Not counted as an answer (fallbacks still play), but it is the first sound
+        and it ends resume_before_audio's listening, like any audio."""
+        base = m.get("t_last_speech") or m.get("t_commit") or time.perf_counter()
+        wait = base + self.cfg.cushion_after_s - time.perf_counter()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        if m.get("_out_started") or self.closed:  # the reply (or another phrase) is already out
+            return
+        m["cushion"] = True
+        m["_out_started"] = True  # set before any await: the reply now waits for the send lock
+        text = self.app.cushion_text
+        self._dbg("cushion", text=text, after_s=round(time.perf_counter() - base, 2))
+        if self.cfg.send_transcript_event:
+            await self._send_json({"type": "agent.transcript", "text": text})
+        await self._send_pcm(self.app.cached["cushion"], m)
 
     async def _pipeline(self, sentences, m, spoken, reply):
         """Producer (LLM sentences) and consumer (TTS + send) overlap, so the next sentence
@@ -475,18 +501,19 @@ class Session:
         if self.in_rate != RATE:
             pcm = resample(pcm, RATE, self.in_rate)
         size = self.in_rate * 2 * self.cfg.output_chunk_ms // 1000
-        t0 = time.perf_counter()
-        for i, c in enumerate(chunk(pcm, size)):
-            if self.closed:
-                return
-            await self.ws.send(c)
-            if i == 0 and "t_first_audio" not in m:
-                m["t_first_audio"] = time.perf_counter()
-                self._dbg("audio.first_sent")
-            if self.cfg.output_pacing == "realtime":
-                wait = t0 + (i + 1) * self.cfg.output_chunk_ms / 1000 - time.perf_counter()
-                if wait > 0:
-                    await asyncio.sleep(wait)
+        async with self._send_lock:  # a clip is never interleaved with another one
+            t0 = time.perf_counter()
+            for i, c in enumerate(chunk(pcm, size)):
+                if self.closed:
+                    return
+                await self.ws.send(c)
+                if i == 0 and "t_first_audio" not in m:
+                    m["t_first_audio"] = time.perf_counter()
+                    self._dbg("audio.first_sent")
+                if self.cfg.output_pacing == "realtime":
+                    wait = t0 + (i + 1) * self.cfg.output_chunk_ms / 1000 - time.perf_counter()
+                    if wait > 0:
+                        await asyncio.sleep(wait)
 
     async def _send_json(self, obj: dict):
         if self.closed:
@@ -531,7 +558,7 @@ class Session:
             "llm_rounds": m.get("llm_rounds"), "tool_calls": m.get("tool_calls"),
             "tools_available": m.get("tools_available"), "tools_list_error": m.get("tools_list_error"),
             "tts_ms": m.get("tts_ms"), "handoff_flags": m.get("handoff_flags"),
-            "outcome": m.get("outcome"), "ignored_frames_while_responding": self.ignored_frames_while_responding,
+            "outcome": m.get("outcome"), "cushion": bool(m.get("cushion")), "ignored_frames_while_responding": self.ignored_frames_while_responding,
             "providers": {"stt": self.app.stt.name, "llm": self.app.llm.name, "tts": self.app.tts.name},
             # what the code checks decided (gate: name / allowed / reason only, no arguments);
             # output-check values (the numbers / time words) only with log_text
