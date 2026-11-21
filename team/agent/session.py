@@ -348,7 +348,7 @@ class Session:
         if prev is not None and not prev.done():  # let a cancelled reply roll back its history first
             await asyncio.wait([prev])
         hist_len = len(self.dialog.messages)
-        cushion = asyncio.create_task(self._cushion(m)) if self.cfg.cushion and "cushion" in self.app.cached else None
+        cushion = asyncio.create_task(self._cushion(m)) if self.cfg.cushion and getattr(self.app, "cushions", None) else None
         try:
             try:
                 async with asyncio.timeout(self.cfg.turn_budget_s):
@@ -413,13 +413,16 @@ class Session:
             await asyncio.sleep(wait)
         if m.get("_out_started") or self.closed:  # the reply (or another phrase) is already out
             return
-        m["cushion"] = True
+        item = self.app.next_cushion()
+        if item is None:
+            return
+        text, pcm = item
+        m["cushion"] = text
         m["_out_started"] = True  # set before any await: the reply now waits for the send lock
-        text = self.app.cushion_text
         self._dbg("cushion", text=text, after_s=round(time.perf_counter() - base, 2))
         if self.cfg.send_transcript_event:
             await self._send_json({"type": "agent.transcript", "text": text})
-        await self._send_pcm(self.app.cached["cushion"], m)
+        await self._send_pcm(pcm, m)
 
     async def _pipeline(self, sentences, m, spoken, reply):
         """Producer (LLM sentences) and consumer (TTS + send) overlap, so the next sentence

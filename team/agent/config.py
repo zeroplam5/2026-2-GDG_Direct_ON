@@ -72,7 +72,10 @@ class Config:
     # Only slow turns get it (the contest site discourages starting every reply with a filler).
     cushion: bool = True
     cushion_after_s: float = 5.0
-    cushion_text: str = "오래 기다려 주셔서 감사합니다."   # phrases.json "cushion" wins when present
+    # phrases separated by "|", used in turn across the whole server (each official case is a new
+    # connection, so a per-call rotation would always pick the first one). phrases.json "cushion"
+    # (a string or a list) wins when present.
+    cushion_text: str = "오래 기다려 주셔서 감사합니다.|기다리게 해 드려 죄송합니다.|잠시만 기다려 주세요, 곧 안내해 드리겠습니다."
 
     # ── providers ──────────────────────────────────────────────────────────
     # Defaults = models fixed for the event: gpt-4o-mini-transcribe / gpt-4.1 (or gpt-5, gpt-4o-mini) /
