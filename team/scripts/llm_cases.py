@@ -130,7 +130,8 @@ def gate_only(cases, tools, rules):
     tally, blocked = collections.Counter(), []
     for c in cases:
         for tc in c["reference"].get("tool_calls", []):
-            g = Gate(rules, {"history": c["history"], "caller": c.get("customer_profile")})
+            # evidence on: the reference calls carry no 근거 칸, so this checks the fallback path
+            g = Gate(rules, {"history": c["history"], "caller": c.get("customer_profile")}, evidence=True)
             g.augment(schemas)
             d = g.check(tc["name"], json.dumps(tc["arguments"], ensure_ascii=False), c["customer_utterance"])
             tally[d.allowed] += 1
@@ -144,11 +145,14 @@ async def run_case(c, cfg, llm, tools, db, static_template, phrases, rules):
     start = {"session_id": c["case_id"], "now": c["now"], "history": c["history"], "caller": c.get("customer_profile")}
     kt = KitTools(tools, db, c)
     dlg = Dialog(llm, kt, policy.build_static_prompt(static_template, phrases, rules, c["now"]), cfg, phrases,
-                 gate=Gate(rules, start) if cfg.tool_gate else None, context=policy.build_context(start))
+                 gate=Gate(rules, start, evidence=cfg.gate_evidence) if cfg.tool_gate else None,
+                 context=policy.build_context(start))
     if cfg.prefetch:  # as in the session: lookups called ahead while the customer is still speaking
         dlg.prefetch = Prefetch(kt, rules, c["history"], c.get("customer_profile"), max_calls=cfg.prefetch_max_calls)
         dlg.prefetch.session_start()
         await dlg.prefetch.settle(cfg.prefetch_settle_s)
+    if cfg.greeting_first and not c["history"]:  # as in the session: the code greets first
+        dlg.greeting = phrases.get("greeting")
     blocked = []  # gate decisions with their arguments (the session log keeps no payloads)
     dlg.debug = lambda kind, **d: blocked.extend(
         {"name": x["name"], "reason": x["reason"], "args": x["args"]} for x in d.get("decisions", []) if not x["allowed"]
@@ -157,7 +161,7 @@ async def run_case(c, cfg, llm, tools, db, static_template, phrases, rules):
     t0 = time.perf_counter()
     try:
         async for s in dlg.run_turn(c["customer_utterance"], m):
-            if first_ms is None:
+            if first_ms is None and not isinstance(s, Ack):  # LLM time: the greeting / ack is not counted
                 first_ms = (time.perf_counter() - t0) * 1000
             said.append(("(대기) " if isinstance(s, Ack) else "") + s)
         err = None

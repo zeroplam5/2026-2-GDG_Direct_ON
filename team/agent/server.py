@@ -59,7 +59,9 @@ class App:
         Path(cfg.metrics_path).parent.mkdir(parents=True, exist_ok=True)
 
     async def warm(self):
-        for k in ("not_heard", "delay_fallback", "error_fallback"):
+        for k in ("not_heard", "stt_timeout", "delay_fallback", "error_fallback"):
+            if k not in self.phrases:  # packs without the phrase fall back to not_heard (session.py)
+                continue
             try:  # a slow/failed TTS call must not stop the server; the phrase is synthesized on demand later
                 self.cached[k] = await self.tts.synth(self.phrases[k])
             except Exception as e:
@@ -77,7 +79,8 @@ class App:
             except Exception as e:
                 log.warning("pre-synthesis of cushion %r failed (%s); that phrase is skipped", text, type(e).__name__)
         from .dialog import ack_phrases
-        for text in (ack_phrases(self.phrases) if self.cfg.tool_ack else []):
+        greet = [self.phrases["greeting"]] if self.cfg.greeting_first and self.phrases.get("greeting") else []
+        for text in greet + (ack_phrases(self.phrases) if self.cfg.tool_ack else []):
             try:
                 self.cached_text[text] = await self.tts.synth(normalize_for_tts(text))
             except Exception as e:

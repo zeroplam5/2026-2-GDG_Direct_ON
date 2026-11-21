@@ -36,6 +36,18 @@
   },
   "handoff_note": "시나리오에 따라 상담원에게 넘길 상황인지 판단하고, 넘길 때는 상담원이 이어서 도와드린다고 안내할 것. 건강 관련 판단은 단정하지 말 것.",
 
+  "status_rules": {
+    "_comment": "team/agent/gate.py step 3: a registration is not sent when every lookup result for that order says one of these delivery statuses (brand material: [배송중 반품 안내], 배송준비중·배송중 주문 취소 불가). No lookup result for the order = no check.",
+    "return_order": {"arg": "order_number", "block": ["배송중"],
+                     "note": "배송중인 주문은 상품을 받으신 뒤 반품할 수 있습니다"},
+    "return_order_item": {"arg": "return_items.order_item_code", "block": ["배송중"],
+                          "note": "배송중인 주문은 상품을 받으신 뒤 반품할 수 있습니다"},
+    "exchange_order": {"arg": "order_number", "block": ["배송중"],
+                       "note": "배송중인 주문은 상품을 받으신 뒤 교환할 수 있습니다"},
+    "cancel_order": {"arg": "order_id", "block": ["배송준비중", "배송중", "배송완료"],
+                     "note": "배송준비중이거나 이미 출고된 주문은 취소할 수 없고, 받으신 뒤 반품으로 진행합니다"}
+  },
+
   "prefetch": {
     "_comment": "team/agent/prefetch.py: the caller's phone and numbers said earlier are looked up at session start only when the earlier conversation has one of these words (the response judge sees every function call). Numbers in the customer's words are always looked up at turn start.",
     "order_words": "주문|배송|택배|송장|도착|결제|입금|환불|반품|교환|취소|회수"

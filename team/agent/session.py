@@ -125,6 +125,8 @@ class Session:
         from .topic_ack import last_agent_line
         self.last_agent = last_agent_line(start.get("history"))
         self.has_caller = bool(start.get("caller"))
+        if self.cfg.greeting_first and not policy.normalize_history(start.get("history")):
+            self.dialog.greeting = self.app.phrases.get("greeting")  # said first, pre-synthesized (server.warm)
         if self.cfg.prefetch:  # order / return lookups called ahead (prefetch.py), never registrations
             pf = Prefetch(self.tools, getattr(self.app, "rules", None), start.get("history"), start.get("caller"),
                           max_calls=self.cfg.prefetch_max_calls)
@@ -408,10 +410,18 @@ class Session:
                                          m, spoken, reply)
                     m["outcome"] = "ok"
             except TimeoutError:
-                m["outcome"] = "budget_timeout"
-                log.warning("[%s] turn budget %.1fs exceeded", self.sid, self.cfg.turn_budget_s)
+                if "t_stt_ready" not in m:
+                    # speech-to-text did not finish (stt_timeout_s or the turn budget): nothing was
+                    # heard, so ask again instead of "확인이 지연되고 있어…" (devui 2026-11-21: 9 of 31 turns)
+                    m["outcome"] = "stt_timeout"
+                    log.warning("[%s] speech-to-text timed out", self.sid)
+                    key = "stt_timeout" if "stt_timeout" in self.app.phrases else "not_heard"
+                else:
+                    m["outcome"] = "budget_timeout"
+                    log.warning("[%s] turn budget %.1fs exceeded", self.sid, self.cfg.turn_budget_s)
+                    key = "delay_fallback"
                 if not spoken["n"]:
-                    await self._speak_cached("delay_fallback", m, spoken)
+                    await self._speak_cached(key, m, spoken)
             except asyncio.CancelledError:
                 if m.get("_resumed"):
                     # cancelled by resume_before_audio: nothing was said, the utterance continues

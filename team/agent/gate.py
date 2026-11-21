@@ -47,6 +47,27 @@ CONFIRM_FIELD = "_customer_confirmation"
 CONFIRM_DESCRIPTION = ("내부 확인용 칸: 고객이 이번 말에서 이 실행에 동의한 표현을 고객 말 그대로 옮겨 적는다. "
                        "동의한 표현이 없으면 빈 문자열로 둔다.")
 
+# Evidence field (근거 칸, cfg.gate_evidence): write functions get one more internal field where the
+# model copies, for every value it put in, the customer's words the value came from. The code checks
+# each quote against what the customer really said (agent words do not count), that IDs and names are
+# inside their quote, that the customer did not correct the number later, and that free-text values
+# (reason, pickup address, refund account) come from the customer at all. Stripped before sending.
+# Official practice data (2026-11-21): all 8 reasons in the reference registrations summarise the
+# customer's own words (none verbatim, none invented), mostly from earlier turns.
+EVIDENCE_FIELD = "_evidence"
+EVIDENCE_DESCRIPTION = ("내부 확인용 칸(고객에게 말하지 않음): 이 함수에 넣은 값마다 그 값이 나온 고객 말을 "
+                        "고객이 말한 그대로 짧게 옮겨 적는다. 예: {\"order_number\": \"주문번호는 …이에요\", "
+                        "\"reason\": \"먹어도 효과가 없어서요\"}. 값이 발신자 정보에서 왔으면 \"발신자 정보\", "
+                        "조회 결과에서 왔으면 \"조회 결과\"라고 적는다. 고객이 말하지 않은 값은 지어내지 말고 고객에게 먼저 묻는다.")
+# names the model used instead of EVIDENCE_FIELD (seen 2026-11-21: "evidence" in 2 of 13 calls, sent on)
+EVIDENCE_ALIASES = ("evidence", "_근거", "근거", "_evidences")
+SOURCE_WORDS = re.compile(r"^\s*(?:발신자|조회\s*결과|이전\s*조회)")
+CORRECTION_WORDS = re.compile(r"아니|잘못|정정|다시\s*말|말고|그게\s*아니|틀렸")
+# word stems that say nothing about WHY (a reason that only shares these with the customer is not grounded)
+_STEM_STOP = {"반품", "환불", "교환", "취소", "요청", "신청", "접수", "고객", "주문", "상품", "제품", "싶어", "싶습",
+              "합니", "해주", "해드", "부탁", "원함", "원하", "처리", "전체", "일부", "하고", "위해", "때문", "으로",
+              "그냥", "모두", "하나", "개를", "있습", "없습"}
+
 _KO_DIGITS = {"공": "0", "영": "0", "일": "1", "이": "2", "삼": "3", "사": "4", "오": "5",
               "육": "6", "륙": "6", "칠": "7", "팔": "8", "구": "9"}
 _KO_RUN = re.compile(r"(?:[공영일이삼사오육륙칠팔구]\s*){3,}")  # 3+ digit words in a row ("이에요" stays)
@@ -74,7 +95,33 @@ MESSAGES = {
                            "바로 접수하지 말고 조회 결과를 안내한 뒤 어느 건을 진행할지 고객에게 확인하세요."),
     "no_intent": ("실행하지 않았습니다: 고객이 이 처리를 원한다는 말이 대화에 없습니다. "
                   "고객이 원하는 것을 먼저 확인하세요."),
+    "no_evidence": ("실행하지 않았습니다: {label} 값의 근거가 되는 고객 말을 찾지 못했습니다. "
+                    "지어내지 말고 고객에게 {label}을(를) 여쭤보세요."),
+    "evidence_mismatch": ("실행하지 않았습니다: {label} 값({value})이 근거로 적은 고객 말에 없습니다. "
+                          "고객이 말한 값을 그대로 쓰고, 분명하지 않으면 한 번 더 여쭤보세요."),
+    "corrected": ("실행하지 않았습니다: 고객이 {label} 값({value})을 뒤에서 다른 값으로 정정했습니다. "
+                  "정정한 값을 쓰세요."),
+    "wrong_status": ("실행하지 않았습니다: 조회 결과 이 주문의 배송상태가 '{status}'입니다. {note}. "
+                     "접수했다고 말하지 말고 이 내용을 고객에게 안내하세요."),
 }
+# one order (or order item) of a lookup result: flat object with the number and the delivery status
+_ORDER_OBJ = re.compile(r"\{[^{}]*\}")
+_ORDER_NO = re.compile(r'"(?:주문번호|상세주문번호)"\s*:\s*"([^"]+)"')
+_ORDER_STATUS = re.compile(r'"배송상태"\s*:\s*"([^"]+)"')
+
+
+def order_statuses(number: str, text: str) -> set[str]:
+    """Delivery statuses that lookup results in `text` give for this order / item number."""
+    want = re.sub(r"\D", "", str(number or ""))
+    out = set()
+    if not want:
+        return out
+    for obj in _ORDER_OBJ.finditer(str(text or "")):
+        s = obj.group(0)
+        st = _ORDER_STATUS.search(s)
+        if st and any(re.sub(r"\D", "", n) == want for n in _ORDER_NO.findall(s)):
+            out.add(st.group(1).strip())
+    return out
 
 # agent turns that are system notices, not questions ("…상담이 자동으로 종료됩니다")
 NOTICE = re.compile(r"자동으로\s*종료|자동\s*종료|상담이\s*종료")
@@ -116,26 +163,74 @@ def _compact(text: str) -> str:
     return re.sub(r"[\s.,!?~…·\"'“”‘’]", "", str(text or ""))
 
 
+def _stems(text: str) -> set[str]:
+    """First two letters of each Korean word, minus stems that say nothing about the content."""
+    return {w[:2] for w in re.findall(r"[가-힣]{2,}", str(text or ""))} - _STEM_STOP
+
+
+def _shares_word(value: str, text: str) -> bool:
+    return any(s in str(text or "") for s in _stems(value))
+
+
+def _find_quote(quote: str, text: str) -> int | None:
+    """Position (in the compact text) where the customer said `quote`. A long quote may be cut or
+    joined differently: then its longest piece of 6+ letters must be found."""
+    q, t = _compact(quote), _compact(text)
+    if not q:
+        return None
+    i = t.find(q)
+    if i >= 0:
+        return i + len(q)
+    pieces = sorted((p for p in re.split(r"[\s.,!?~…·\"'“”‘’]+", quote) if len(_compact(p)) >= 6),
+                    key=len, reverse=True)
+    for p in pieces[:1]:
+        i = t.find(_compact(p))
+        if i >= 0:
+            return i + len(_compact(p))
+    return None
+
+
+def _corrected_later(value: str, text: str) -> bool:
+    """The customer said `value` (9+ digits) and later, after a correction word ("아 잘못 말했다"),
+    another number of the same length. Two numbers without a correction word (two orders) are fine."""
+    s = _KO_RUN.sub(lambda m: "".join(_KO_DIGITS.get(c, c) for c in m.group(0) if not c.isspace()), str(text or ""))
+    nums = [(m.start(), m.end(), re.sub(r"\D", "", m.group(0)))
+            for m in re.finditer(r"\d(?:[\d\-.]|\s(?=\d))*\d", s)]
+    mine = [n for n in nums if n[2] == value]
+    if not mine:
+        return False
+    end = mine[-1][1]
+    for start, _, d in nums:
+        if start >= end and len(d) == len(value) and d != value and CORRECTION_WORDS.search(s[end:start + 1]):
+            return True
+    return False
+
+
 @dataclass
 class Decision:
     allowed: bool
     args: dict = field(default_factory=dict)    # arguments to send (internal field removed)
     reason: str | None = None
     message: str = ""
+    evidence: dict | None = None  # argument -> ok / source / fallback / missing (no payloads)
 
     def result(self) -> dict:
         """What the model sees instead of a function result when the call is blocked."""
         return {"status": "not_executed", "reason": self.reason, "message": self.message}
 
     def log_entry(self, name: str) -> dict:
-        return {"name": name, "allowed": self.allowed, "reason": self.reason}  # no payloads
+        e = {"name": name, "allowed": self.allowed, "reason": self.reason}  # no payloads
+        if self.evidence is not None:
+            e["evidence"] = self.evidence
+        return e
 
 
 class Gate:
     DEFAULT_SPEC = {"kind": "write", "confirm": "explicit"}
 
-    def __init__(self, rules: dict | None = None, start: dict | None = None):
+    def __init__(self, rules: dict | None = None, start: dict | None = None, evidence: bool = False):
         self.table = rules or {}
+        self.evidence = evidence  # 근거 칸 (EVIDENCE_FIELD) on write functions
         start = start or {}
         self.history = normalize_history(start.get("history"))
         caller = start.get("caller")
@@ -150,7 +245,7 @@ class Gate:
 
     @classmethod
     def from_config(cls, cfg, start: dict) -> "Gate":
-        return cls(load_rules(cfg.rules_path), start)
+        return cls(load_rules(cfg.rules_path), start, evidence=getattr(cfg, "gate_evidence", False))
 
     # ── schema side ───────────────────────────────────────────────────────
     def spec(self, name: str) -> dict:
@@ -169,20 +264,76 @@ class Gate:
         out = []
         for s in schemas or []:
             f = s.get("function", s)
-            self.schemas[f.get("name", "")] = f
-            if not self.needs_consent(f.get("name", "")):
+            name = f.get("name", "")
+            self.schemas[name] = f
+            consent = self.needs_consent(name)
+            evidence = self.evidence and self.spec(name).get("kind") == "write"
+            if not consent and not evidence:
                 out.append(s)
                 continue
             s2 = copy.deepcopy(s)
             f2 = s2.get("function", s2)
             params = f2.setdefault("parameters", {"type": "object", "properties": {}})
-            params.setdefault("properties", {})[CONFIRM_FIELD] = {"type": "string", "description": CONFIRM_DESCRIPTION}
+            props = params.setdefault("properties", {})
             req = list(params.get("required") or [])
-            if CONFIRM_FIELD not in req:
-                req.append(CONFIRM_FIELD)
+            if consent:
+                props[CONFIRM_FIELD] = {"type": "string", "description": CONFIRM_DESCRIPTION}
+                req += [] if CONFIRM_FIELD in req else [CONFIRM_FIELD]
+            if evidence:
+                props[EVIDENCE_FIELD] = {"type": "object", "description": EVIDENCE_DESCRIPTION,
+                                         "additionalProperties": {"type": "string"}}
+                req += [] if EVIDENCE_FIELD in req else [EVIDENCE_FIELD]
             params["required"] = req
             out.append(s2)
         return out
+
+    def has_status_rule(self, name: str) -> bool:
+        return name in (self.table.get("status_rules") or {})
+
+    def _label(self, arg: str) -> str:
+        labels = self.table.get("arg_labels") or {}
+        return labels.get(arg) or {"reason": "사유", "pickup_address": "회수지 주소",
+                                    "refund_account": "환불 계좌"}.get(arg, arg)
+
+    def check_evidence(self, args: dict, evidence, value_args: list[str], customer: str):
+        """(blocked argument, block reason) or (None, {argument: status}). Top-level string values only.
+        ID-like values (value_args, digits) passed the grounding check already: a missing or unfound
+        quote is logged, a value outside its quote or a later correction blocks. Free-text values
+        (reason, address, account) must come from the customer: quote found, or (no usable quote)
+        the value shares a content word with what the customer said."""
+        ev = evidence if isinstance(evidence, dict) else ({"*": str(evidence)} if evidence else {})
+        id_args = {a.split(".")[0] for a in value_args}
+        status = {}
+        for a, v in args.items():
+            if a in (CONFIRM_FIELD, EVIDENCE_FIELD, *EVIDENCE_ALIASES) or not isinstance(v, str) or not v.strip() \
+                    or self.placeholder.search(v.strip()):
+                continue
+            q = str(ev.get(a) or "").strip()
+            free = a not in id_args and not re.fullmatch(r"[\d\-\s]+", v)
+            nv = normalize_value(v)
+            if not free and re.fullmatch(r"\d{9,}", nv) and _corrected_later(nv, customer):
+                return a, "corrected"
+            if q and SOURCE_WORDS.match(q):
+                if free:  # a reason does not come from the caller record or a lookup
+                    return a, "no_evidence"
+                status[a] = "source"
+                continue
+            pos = _find_quote(q, customer) if q else None
+            if free:
+                if pos is not None:
+                    status[a] = "ok"
+                elif _shares_word(v, customer):
+                    status[a] = "fallback"
+                else:
+                    return a, "no_evidence"
+                continue
+            if pos is None:
+                status[a] = "missing" if not q else "quote_not_found"
+                continue
+            if nv not in normalize_text(q) and nv not in normalize_value(q):
+                return a, "evidence_mismatch"
+            status[a] = "ok"
+        return None, status
 
     # ── decision side ─────────────────────────────────────────────────────
     def last_agent_text(self) -> str:
@@ -213,10 +364,18 @@ class Gate:
         return list((self.schemas.get(name, {}).get("parameters") or {}).get("required") or [])
 
     def check(self, name: str, arguments_json: str, utterance: str, last_agent: str | None = None,
-              prior: str = "", turn_results: str = "") -> Decision:
+              prior: str = "", turn_results: str = "", customer: str | None = None) -> Decision:
         """prior = earlier turns of this session (live multi-turn use; the evaluator sends one
         utterance per connection, so it is empty there). turn_results = function results of
-        this turn so far."""
+        this turn so far. customer = everything the customer said, in order (session.start history
+        + this session); default: history customer lines + this utterance."""
+        self._ev_status = None
+        d = self._check(name, arguments_json, utterance, last_agent, prior, turn_results, customer)
+        if d.allowed and self._ev_status is not None:
+            d.evidence = self._ev_status
+        return d
+
+    def _check(self, name, arguments_json, utterance, last_agent, prior, turn_results, customer) -> Decision:
         try:
             args = json.loads(arguments_json or "{}")
             if not isinstance(args, dict):
@@ -224,6 +383,11 @@ class Gate:
         except ValueError:
             return Decision(False, reason="invalid_arguments", message=MESSAGES["invalid_arguments"])
         quote = str(args.pop(CONFIRM_FIELD, "") or "").strip()
+        evidence = args.pop(EVIDENCE_FIELD, None)
+        for alias in EVIDENCE_ALIASES:  # the model sometimes drops the underscore: never send it on
+            if alias in args:
+                v = args.pop(alias)
+                evidence = evidence if evidence is not None else v
         sp = self.spec(name)
         mode = sp.get("confirm", "explicit")
         is_write = sp.get("kind") == "write"
@@ -265,6 +429,16 @@ class Gate:
                         continue  # a lookup may chain on this turn's results
                     return block("unconfirmed_lookup", arg=arg, value=v)
                 return block("not_grounded", arg=arg, value=v)
+        ev_status = None
+        if is_write and self.evidence:
+            # the session.start history's customer lines are always included (the caller's `customer`
+            # may come from a context built elsewhere), then this session's words in order
+            said = "\n".join([*(t for r, t in self.history if r == "customer"),
+                              customer if customer is not None else (utterance or "")])
+            bad, ev_status = self.check_evidence(args, evidence, all_value_args, said)
+            if bad:
+                return block(ev_status, label=self._label(bad), value=args.get(bad))
+            self._ev_status = ev_status
         if is_write and mode == "context":
             if self.negative.search(utterance or ""):
                 return block("hesitation")
@@ -273,6 +447,15 @@ class Gate:
             intent = sp.get("intent")
             if intent and not re.search(intent, self._intent_text(utterance, prior)):
                 return block("no_intent")
+            # 3. delivery status (rules "status_rules"): a registration the brand material rules out for the
+            # status the lookup returned ("배송중" -> return only after delivery). No lookup result: no check.
+            rule = (self.table.get("status_rules") or {}).get(name) if is_write else None
+            if rule:
+                looked = "\n".join([" ".join(t for r, t in self.history if r == "tool_result"), turn_results or "", prior or ""])
+                for v in real(rule.get("arg", "")):
+                    st = order_statuses(v, looked)
+                    if st and st <= set(rule.get("block") or []):
+                        return block("wrong_status", status="·".join(sorted(st)), note=rule.get("note", ""))
             return Decision(True, args)
         if not self.needs_consent(name):
             return Decision(True, args)
