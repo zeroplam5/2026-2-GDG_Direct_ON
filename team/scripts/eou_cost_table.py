@@ -83,8 +83,45 @@ def table(title: str, configs: dict, pipes: list[float]) -> list[str]:
     return lines
 
 
+AFTER_TABLE = [(3.5, 100), (4.0, 90), (4.5, 80), (5.0, 70), (5.5, 60), (6.0, 50), (7.0, 30), (8.0, 10)]
+
+
+def official_table(d: Path, pipes: list[float], after: float) -> list[str]:
+    """Official practice voices (eou_sweep_official.py results_<setting>.json): official speed formula,
+    function cases = mean(first-sound points, after-function points with an ASSUMED after-function time)."""
+    lines = ["### C. 공식 연습 음성 80개 (공식 측정기, 동시 4) — 사이트 속도 공식", "",
+             f"함수 문항은 (첫 소리 점수 + 조회 뒤 답 점수) ÷ 2, 조회 뒤 답은 {after:g}초로 가정.", "",
+             "| 말 끝 규칙 | 끼어듦 | 말 끝 판단 p50 / p90 | " + " | ".join(f"처리 {p:g}초" for p in pipes) + " |",
+             "|---|---|---|" + "---|" * len(pipes)]
+    best = {p: (-1, "") for p in pipes}
+    for f in sorted(d.glob("results_*.json")):
+        name = f.stem.removeprefix("results_")
+        res = json.loads(f.read_text(encoding="utf-8"))
+        waits = sorted(fs - (ac or 0) for fs, ac, _ in res.values() if fs not in (INT, None))
+        n_int = sum(1 for fs, _, _ in res.values() if fs == INT)
+        cells = []
+        for p in pipes:
+            tot = []
+            for fs, ac, tool in res.values():
+                if fs in (INT, None):
+                    tot.append(0)
+                    continue
+                first = pts(fs - (ac or 0) + p)
+                tot.append((first + next((v for b, v in AFTER_TABLE if after <= b), 0)) / 2 if tool else first)
+            s = sum(tot) / len(tot)
+            cells.append(s)
+            if s > best[p][0]:
+                best[p] = (s, name)
+        lines.append(f"| {name} | {n_int}/{len(res)} | {waits[len(waits) // 2]:.2f} / {waits[int(len(waits) * 0.9)]:.2f}초 | "
+                     + " | ".join(f"{c:.1f}" for c in cells) + " |")
+    lines += ["", "가장 높은 규칙: " + " / ".join(f"처리 {p:g}초 → **{best[p][1]}** ({best[p][0]:.1f})" for p in pipes), ""]
+    return lines
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--official-dir", default=None, help="eou_sweep_official.py --out 폴더 (공식 음성 결과)")
+    ap.add_argument("--after-tool", type=float, default=2.5, help="가정한 조회 뒤 답 시간(초)")
     ap.add_argument("--sweep", default="team/runs/endpoint_sweep_dry_1119/cases.csv")
     ap.add_argument("--bench", default="team/runs/bench_scripted/summary.json")
     ap.add_argument("--pipeline", default="1.0,1.5,2.08,2.63",
@@ -97,6 +134,8 @@ def main():
               "default_1100_1800": "문장 완결 1.1초 / 최대 1.8초 (현재 기본값)",
               "silence_only_1500": "침묵만 1.5초"}
     md = ["# 말 끝 판단 비용표", ""]
+    if a.official_dir:
+        md += official_table(Path(a.official_dir), pipes, a.after_tool)
     md += table("A. 말 끝 판단 실험 음성 18개 (team/data/endpoint_ko, 침묵만, 삐 소리)", load_sweep(REPO / a.sweep), pipes)
     md += table("B. 팀 연습 음성 8문항 × 3회 (team/data/practice_ko, 대체물)", load_bench(REPO / a.bench, labels), pipes)
     text = "\n".join(md)
