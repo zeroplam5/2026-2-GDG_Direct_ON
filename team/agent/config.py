@@ -154,6 +154,11 @@ class Config:
     # the KULLM gateway masks phone / order numbers in user messages ("[PHONE]"): send them to the
     # model as slot names with a table in the system message (team/agent/number_slots.py)
     number_slots: bool = True
+    # order / return lookups called ahead for real (team/agent/prefetch.py): caller phone and earlier
+    # numbers at session start, numbers in the customer's words at turn start. Registrations never.
+    prefetch: bool = True
+    prefetch_max_calls: int = 6            # per session
+    prefetch_settle_s: float = 2.0         # longest wait for running prefetches before the first answer audio
     # output check (team/agent/output_guard.py) on every model sentence before TTS:
     # log = record numbers found nowhere in prompt / customer words / function results,
     # block = replace such a sentence with phrases["unverified_fallback"], off = skip

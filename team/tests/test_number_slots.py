@@ -26,6 +26,12 @@ def test_ids_get_slots_dates_prices_and_short_numbers_do_not():
     assert s.decode(enc) == text
 
 
+def test_a_date_or_price_after_a_number_is_not_swallowed():
+    s = NumberSlots()
+    assert s.encode(f"주문번호 {ORD} 2099-01-05에 12000원 결제") == "주문번호 [번호1] 2099-01-05에 12000원 결제"
+    assert s.encode(f"{ORD} {PH}") == "[번호1] [번호2]"
+
+
 def test_same_number_same_slot_and_unknown_slots_stay():
     s = NumberSlots()
     assert s.encode(f"{PH} 아니 {PH2}, 다시 {PH}") == "[번호1] 아니 [번호2], 다시 [번호1]"

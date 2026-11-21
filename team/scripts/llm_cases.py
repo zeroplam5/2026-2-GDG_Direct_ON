@@ -32,6 +32,7 @@ from team.agent.config import REPO_ROOT, Config
 from team.agent.dialog import Ack, Dialog
 from team.agent.envfile import load_env_file
 from team.agent.gate import Gate
+from team.agent.prefetch import Prefetch
 from team.agent.providers import make_llm
 
 LOOKUP_FUNCS = {"get_order_info", "get_return_info"}
@@ -139,6 +140,10 @@ async def run_case(c, cfg, llm, tools, db, static_template, phrases, rules):
     kt = KitTools(tools, db, c)
     dlg = Dialog(llm, kt, policy.build_static_prompt(static_template, phrases, rules, c["now"]), cfg, phrases,
                  gate=Gate(rules, start) if cfg.tool_gate else None, context=policy.build_context(start))
+    if cfg.prefetch:  # as in the session: lookups called ahead while the customer is still speaking
+        dlg.prefetch = Prefetch(kt, rules, c["history"], c.get("customer_profile"), max_calls=cfg.prefetch_max_calls)
+        dlg.prefetch.session_start()
+        await dlg.prefetch.settle(cfg.prefetch_settle_s)
     blocked = []  # gate decisions with their arguments (the session log keeps no payloads)
     dlg.debug = lambda kind, **d: blocked.extend(
         {"name": x["name"], "reason": x["reason"], "args": x["args"]} for x in d.get("decisions", []) if not x["allowed"]

@@ -20,6 +20,7 @@ import re
 
 # digit groups joined by single separators (-, ., space), optional leading "+"
 _RUN = re.compile(r"(?<!\d)\+?\d(?:\d|[-. ](?=\d))*\d")
+_TOKEN = re.compile(r"\+?\d+(?:[-.]\d+)*")  # one space-free piece of a run
 _DATE = re.compile(r"\d{4}[-.]\d{1,2}[-.]\d{1,2}(?!\d)")
 _SLOT = re.compile(r"\[번호(\d+)\]")
 MIN_DIGITS = 9
@@ -30,6 +31,34 @@ TABLE_HEAD = ("[번호 자리표] 고객 말 속 번호는 전송 중에 가려�
 
 def _is_id(raw: str) -> bool:
     return len(re.sub(r"\D", "", raw)) >= MIN_DIGITS and not _DATE.match(raw.lstrip("+"))
+
+
+def _groups(s: str) -> list[str]:
+    return re.split(r"[-. ]", s.lstrip("+"))
+
+
+def spans(text: str) -> list[tuple[int, int, str]]:
+    """Numbers as written, with their position. A space joins two pieces only when both groups next
+    to it are short (2-4 digits, as in "010 9999 0000"), so "…-0001234 2099-01-05" stays two numbers."""
+    out = []
+    for m in _RUN.finditer(text or ""):
+        cur = None
+        for t in _TOKEN.finditer(m.group(0)):
+            a, b = m.start() + t.start(), m.start() + t.end()
+            if cur and len(_groups(cur[2])[-1]) <= 4 and len(_groups(t.group(0))[0]) <= 4:
+                cur = (cur[0], b, text[cur[0]:b])
+            else:
+                if cur:
+                    out.append(cur)
+                cur = (a, b, t.group(0))
+        if cur:
+            out.append(cur)
+    return out
+
+
+def id_numbers(text: str) -> list[str]:
+    """ID-like numbers (phones, order numbers ...) as written; dates, prices and short numbers left out."""
+    return [raw for _, _, raw in spans(text) if _is_id(raw)]
 
 
 class NumberSlots:
@@ -46,7 +75,12 @@ class NumberSlots:
     def encode(self, text: str) -> str:
         if not text:
             return text
-        return _RUN.sub(lambda m: self._slot(m.group(0)) if _is_id(m.group(0)) else m.group(0), text)
+        out, pos = [], 0
+        for a, b, raw in spans(text):
+            if _is_id(raw):
+                out += [text[pos:a], self._slot(raw)]
+                pos = b
+        return "".join(out) + text[pos:]
 
     def decode(self, text: str) -> str:
         if not text or "[번호" not in text:
