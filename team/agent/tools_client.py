@@ -40,6 +40,7 @@ class ToolsClient:
         self.tools: list[dict] = []
         self.log: list[dict] = []  # per-call timing for metrics (no payloads)
         self.list_error: str | None = None
+        self.sent_count = 0  # requests actually sent to tools_url (counted before the POST)
         self.debug = None  # optional callable(kind, **data); set only by the devui test server
 
     @property
@@ -97,6 +98,7 @@ class ToolsClient:
             return {"status": "error", "error": "missing_arguments", "missing": missing,
                     "message": "Ask the customer for: " + ", ".join(missing)}
         entry["sent"] = True
+        self.sent_count += 1
         try:
             r = await self.http.post(f"{self.base}/tools/{name}", json=args, timeout=self.timeout_s,
                                      headers={"X-Session-Id": self.session_id})
