@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -32,6 +33,34 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 NEED_KEYS = ("OPENAI_API_KEY", "SONIOX_API_KEY", "GEMINI_API_KEY")
+# non-secret settings the contest requires (official README: 행사 지원 모델). Without them the
+# agent falls back to the code defaults (older OpenAI STT/TTS), which are not the contest models.
+OFFICIAL_SETTINGS = {
+    "AGENT_STT_PROVIDER": "soniox",
+    "AGENT_TTS_PROVIDER": "gemini",
+    "AGENT_LLM_MODEL": "gpt-5.4-mini",
+    "AGENT_SONIOX_MODEL": "stt-rt-v6",
+    "AGENT_GEMINI_TTS_MODEL": "gemini-3.8-flash-lite-tts",
+}
+
+
+def env_warnings(env_path: Path) -> list[str]:
+    """Warnings about .env. Key VALUES are never read into the output; only key names, and the
+    values of the non-secret settings above, are compared."""
+    pairs = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            k, v = line.split("=", 1)
+            pairs[k.strip()] = v.strip().strip('"').strip("'")
+    out = [f".env 에 키 이름이 없음: {k}" for k in NEED_KEYS if not pairs.get(k)]
+    for k, want in OFFICIAL_SETTINGS.items():
+        if k not in pairs:
+            out.append(f".env 에 {k}={want} 줄이 없음 -> 코드 기본값(공식 모델 아님)으로 동작")
+        elif pairs[k] != want:
+            out.append(f".env 의 {k}={pairs[k]} 가 공식 값 {want} 과 다름")
+    if pairs.get("AGENT_LOG_TEXT", "0").lower() in ("1", "true", "yes", "on"):
+        out.append(".env 에 AGENT_LOG_TEXT=1 -> 손님 말·답 텍스트가 기록 파일에 남음. 제출 때는 빼기")
+    return out
 
 
 def sh(cmd, **kw):
@@ -55,11 +84,8 @@ def build(a) -> Path:
         z.write(db, "official/mock_db.json")
         if env.exists():
             z.write(env, ".env")
-            names = {l.split("=", 1)[0].strip() for l in env.read_text(encoding="utf-8").splitlines()
-                     if "=" in l and not l.lstrip().startswith("#")}
-            missing = [k for k in NEED_KEYS if k not in names]
-            if missing:
-                print("주의: .env 에 없는 키 이름: " + ", ".join(missing), file=sys.stderr)
+            for w in env_warnings(env):
+                print("주의: " + w, file=sys.stderr)
         else:
             print(f"주의: {env} 가 없어 키 없이 압축했습니다 (제출 때는 .env 필요)", file=sys.stderr)
         names = z.namelist()
@@ -135,7 +161,18 @@ def check(a, zpath: Path):
         for x in res:
             calls = ", ".join(f"{c['name']}({'기록 일치' if c.get('matched') else '기록 없음'})" for c in x.get("tool_calls", []))
             print(f"    {x['case_id']}: 첫 소리 {x.get('first_sound')}  함수 [{calls}]" + (f"  오류 {x['error'][:80]}" if x.get("error") else ""))
-        ok = bool(res) and not errs and not no_end and len(res) == a.limit
+        silent = [x for x in res if not x.get("error") and x.get("first_sound") is None]
+        ok = bool(res) and not errs and not no_end and not silent and len(res) == a.limit
+        # quiet failures: the server stays up and sends turn.end, but STT/TTS/LLM fail every turn
+        slog = (work / "server.log").read_text(errors="ignore")
+        warm_fail = slog.count("pre-synthesis of")
+        turn_err = len(re.findall(r"outcome=error", slog))
+        if silent:
+            print(f"    주의: 소리를 하나도 안 낸 문항 {len(silent)}개 (속도·응대 0점)")
+        if warm_fail or turn_err:
+            print(f"    주의: 시작 때 고정 문장 합성 실패 {warm_fail}개, 턴 처리 오류 {turn_err}개 -> 키·모델 이름·인증 방식 확인"
+                  " (Soniox 인증 오류면 .env 에 AGENT_SONIOX_AUTH=header)")
+            ok = False
         if not res:
             print(r.stdout[-800:], r.stderr[-800:])
         s = subprocess.run([str(py), "score.py", "--run", str(run), "--cases", "../data/practice_cases.jsonl"]
