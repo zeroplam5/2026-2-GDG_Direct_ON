@@ -11,10 +11,18 @@ Turn flow
 Speculative STT is safe: it has no side effects and is discarded if the customer keeps
 talking. LLM / tool calls are NOT started speculatively because tool calls are recorded by
 the function server (a premature call would be a wrong call).
+
+resume_before_audio (opt-in, eou_mode=vad only): after a commit the session keeps feeding the
+VAD until the first voiced audio of the reply is sent. If the customer starts speaking again
+(min_speech_ms onset), the prepared reply (STT / LLM / TTS) is cancelled, the dialog history
+of that turn is rolled back, and the previous utterance + the new audio are endpointed again as
+one utterance. Not done once a function call was sent to tools_url this turn (it would be
+recorded twice), nor after the first sound (no barge-in).
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -61,6 +69,11 @@ class Session:
         self.t0 = time.perf_counter()
         self.stream: SonioxStream | None = None  # only with cfg.eou_mode == "soniox_stream"
         self.stream_end: str | None = None       # text of a "<end>" not acted on yet
+        # resume_before_audio: committed utterance audio and frames heard since the commit
+        self.resp_prev_audio = b""
+        self.resp_heard = bytearray()
+        self.resp_listen = False
+        self.cancelled_task: asyncio.Task | None = None  # reply cancelled by a resume, may still be unwinding
 
     # ── session.start ─────────────────────────────────────────────────────
     async def _read_start(self) -> dict:
@@ -171,6 +184,8 @@ class Session:
         if self.stream:
             self.stream.send(frame)  # also while responding: keeps the Soniox stream fed
         if self.responding:
+            if self.resp_listen and self._listen_before_audio(frame, now):
+                return
             # Half-duplex baseline: no barge-in while the agent is answering.
             self.ignored_frames_while_responding += 1
             return
@@ -212,6 +227,53 @@ class Session:
                 reason = "complete_text"
         if reason:
             self._commit(reason, now)
+
+    # ── resume_before_audio (opt-in) ──────────────────────────────────────
+    def _listen_before_audio(self, frame: bytes, now: float) -> bool:
+        """Frame heard while the reply is being prepared. Returns False when listening has
+        ended for this turn (the frame is then ignored as before)."""
+        m = self.m
+        if m.get("_out_started") or self.resp_task is None or self.resp_task.done():
+            self._stop_listening()
+            return False
+        if self.tools.sent_count > m.get("_tools_sent_at_commit", 0):
+            # a function call already reached the function server: cancelling could make the
+            # next turn send it again (e.g. a second registration)
+            m["resume_blocked"] = "tool_sent"
+            self._stop_listening()
+            return False
+        self.resp_heard.extend(frame)
+        if self.ep.feed(frame) != "start":
+            return True
+        # the customer goes on speaking: cancel the prepared reply, continue the same utterance
+        old = self.m
+        old["_resumed"] = True
+        self.cancelled_task = self.resp_task
+        self.resp_task.cancel()
+        self.resp_task = None
+        self.responding = False
+        self.turn_idx -= 1  # the cancelled reply was never a turn
+        n = old.get("resumed_after_commit", 0) + 1
+        self.m = {"t_speech_start": old.get("t_speech_start", now), "resumes": old.get("resumes", 0),
+                  "resumed_after_commit": n, "t_last_speech": now}
+        utt = self.resp_prev_audio + bytes(self.resp_heard)  # the VAD preroll is the tail of resp_heard
+        self.ep.utt = bytearray(utt)
+        self.ep.utt_ms = len(utt) * 1000 // (RATE * 2)
+        self.ep.last_speech_end_bytes = len(utt)
+        self.ep.silence_ms = 0
+        self.resp_listen = False  # not _stop_listening(): the VAD keeps this utterance open
+        self.resp_prev_audio, self.resp_heard = b"", bytearray()
+        log.info("[%s] speech resumed %dms after commit: reply cancelled (%d)", self.sid,
+                 round((now - old.get("t_commit", now)) * 1000), n)
+        self._dbg("vad", event="resumed_after_commit", count=n,
+                  after_commit_ms=round((now - old.get("t_commit", now)) * 1000, 1))
+        return True
+
+    def _stop_listening(self):
+        if self.resp_listen:
+            self.resp_listen = False
+            self.resp_prev_audio, self.resp_heard = b"", bytearray()
+            self.ep.reset()  # frames heard while listening are not the next utterance
 
     # ── eou_mode=soniox_stream (opt-in) ───────────────────────────────────
     def _on_frame_stream(self, sil: int, now: float):
@@ -261,6 +323,11 @@ class Session:
         self.turn_idx += 1
         self.m.update(t_commit=now, eou_reason=reason, utt_ms=self.ep.utt_ms, silence_at_commit_ms=self.ep.silence_ms)
         audio = self.ep.utterance_audio()
+        if self.cfg.resume_before_audio and self.cfg.eou_mode == "vad" and self.stream is None:
+            self.resp_listen = True
+            self.resp_prev_audio, self.resp_heard = bytes(self.ep.utt), bytearray()
+            tools = getattr(self, "tools", None)
+            self.m["_tools_sent_at_commit"] = tools.sent_count if tools else 0
         stt_task = self.stt_task if (self.stt_task and self.stt_version == self.ep.version) else None
         if stt_task is None and self.stt_task:
             self.stt_task.cancel()
@@ -276,6 +343,10 @@ class Session:
     async def _respond(self, stt_task, audio: bytes, m: dict):
         spoken = {"n": 0}
         user_text, reply = "", []
+        prev, self.cancelled_task = self.cancelled_task, None
+        if prev is not None and not prev.done():  # let a cancelled reply roll back its history first
+            await asyncio.wait([prev])
+        hist_len = len(self.dialog.messages)
         try:
             try:
                 async with asyncio.timeout(self.cfg.turn_budget_s):
@@ -291,7 +362,7 @@ class Session:
                         await self._speak_cached("not_heard", m, spoken)
                         return
                     if not self.tools_ready.done():
-                        await self.tools_ready
+                        await asyncio.shield(self.tools_ready)  # a cancelled turn must not cancel the load
                     m["tools_available"] = sorted(self.tools.names)
                     if self.tools.list_error:
                         m["tools_list_error"] = self.tools.list_error
@@ -303,6 +374,10 @@ class Session:
                 if not spoken["n"]:
                     await self._speak_cached("delay_fallback", m, spoken)
             except asyncio.CancelledError:
+                if m.get("_resumed"):
+                    # cancelled by resume_before_audio: nothing was said, the utterance continues
+                    del self.dialog.messages[hist_len:]
+                    self._dbg("reply_cancelled", reason="resumed_after_commit")
                 raise
             except Exception as e:
                 m["outcome"] = f"error:{type(e).__name__}"
@@ -310,13 +385,15 @@ class Session:
                 if not spoken["n"]:
                     await self._speak_cached("error_fallback", m, spoken)
         finally:
-            await self._send_json({"type": "turn.end"})
-            m["t_turn_end"] = time.perf_counter()
-            self._dbg("turn_end_sent", outcome=m.get("outcome"))
-            self.responding = False
-            if self.stream:
-                self.stream.clear()  # tokens heard while the agent spoke are not the next utterance
-            self._write_metrics(m, user_text, " ".join(reply))
+            if not m.get("_resumed"):  # a resumed turn sends no turn.end and writes no metrics row
+                self._stop_listening()
+                await self._send_json({"type": "turn.end"})
+                m["t_turn_end"] = time.perf_counter()
+                self._dbg("turn_end_sent", outcome=m.get("outcome"))
+                self.responding = False
+                if self.stream:
+                    self.stream.clear()  # tokens heard while the agent spoke are not the next utterance
+                self._write_metrics(m, user_text, " ".join(reply))
 
     async def _pipeline(self, sentences, m, spoken, reply):
         """Producer (LLM sentences) and consumer (TTS + send) overlap, so the next sentence
@@ -345,6 +422,9 @@ class Session:
         finally:
             if not prod.done():
                 prod.cancel()
+                # wait until it has stopped, so it cannot touch the dialog history afterwards
+                with contextlib.suppress(BaseException):
+                    await asyncio.gather(prod, return_exceptions=True)
 
     async def _speak_text(self, text: str, m: dict, spoken: dict):
         """tts_ms = time until the first audio of this sentence is available
@@ -361,6 +441,7 @@ class Session:
             async for pcm in self.app.tts.stream(norm):
                 if first:
                     m.setdefault("tts_ms", []).append(round((time.perf_counter() - t) * 1000, 1))
+                    m["_out_started"] = True  # from here on the reply is no longer cancelled
                     if self.cfg.send_transcript_event:
                         await self._send_json({"type": "agent.transcript", "text": text})
                     first = False
@@ -378,6 +459,7 @@ class Session:
         await self._send_audio(self.app.phrases[key], pcm, m, spoken)
 
     async def _send_audio(self, text: str, pcm: bytes, m: dict, spoken: dict):
+        m["_out_started"] = True  # the transcript goes out right before the audio
         if self.cfg.send_transcript_event:
             await self._send_json({"type": "agent.transcript", "text": text})
         await self._send_pcm(pcm, m)
@@ -389,7 +471,7 @@ class Session:
             pcm = trim_leading_silence(pcm)
             if not pcm:
                 return
-            m["_voiced_started"] = True
+            m["_voiced_started"] = m["_out_started"] = True
         if self.in_rate != RATE:
             pcm = resample(pcm, RATE, self.in_rate)
         size = self.in_rate * 2 * self.cfg.output_chunk_ms // 1000
@@ -440,6 +522,7 @@ class Session:
             "eou_mode": "soniox_stream" if self.stream else "vad", "stt_source": m.get("stt_source", "batch"),
             "soniox_end_ms_rel": rel("t_soniox_end"),
             "resumes": m.get("resumes", 0), "utt_ms": m.get("utt_ms"),
+            "resumed_after_commit": m.get("resumed_after_commit", 0), "resume_blocked": m.get("resume_blocked"),
             # all *_ms_rel are measured from the arrival of the last voiced frame
             "commit_ms_rel": rel("t_commit"), "stt_start_ms_rel": rel("t_stt_start"),
             "stt_end_ms_rel": rel("t_stt_end"), "stt_ms": m.get("stt_ms"),
