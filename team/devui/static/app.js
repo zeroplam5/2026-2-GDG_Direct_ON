@@ -1608,6 +1608,8 @@ function demoSelectTab(id, focus = false) {
     tab.tabIndex = on ? 0 : -1;
     $(tab.getAttribute('aria-controls')).hidden = !on;
   }
+  const panes = document.querySelector('.d-panes');
+  if (panes) panes.scrollTop = 0;   // a new tab starts at its top
   if (focus) $(id).focus();
 }
 DEMO_TABS.forEach((tid, i) => {

@@ -357,3 +357,18 @@ body.demo .d-top { max-width: none; width: 100%; margin-left: 0; margin-right: 0
 #demoDurations:not(:empty) { margin-bottom: 26px; }
 #demoDurations .d-row { font-size: 14px; padding: 8px 0; }
 .d-tl-i.tl-minor .d-tl-k { color: var(--d-muted); font-size: 14px; }
+/* the tab row stays put: only the content under it scrolls.
+   Wide screens: the side sheet is a fixed-height column (tabs on top, panes scroll inside).
+   Narrow screens (the page itself scrolls): the tab row sticks to the top of the window. */
+.d-tabs { background: var(--d-surface); }
+@media (min-width: 861px) {
+  .d-sheet { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+  .d-tabs { flex: none; }
+  .d-panes { flex: 1; min-height: 0; overflow: auto; padding-bottom: clamp(16px, 2.6vh, 28px);
+    margin-right: -14px; padding-right: 14px; scrollbar-gutter: stable; }
+}
+@media (max-width: 860px) {
+  /* overflow: hidden on the card would make it the sticky container; clip keeps the rounded corners without that */
+  .d-grid { overflow: clip; }
+  .d-tabs { position: sticky; top: 0; z-index: 2; padding-top: 12px; margin-top: -12px; }
+}
