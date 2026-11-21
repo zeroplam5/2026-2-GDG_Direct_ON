@@ -191,7 +191,9 @@ class SonioxSTT:
         step = max(640, 32 * self.cfg.soniox_chunk_ms)  # bytes per chunk at 16 kHz s16le
         final: list[str] = []
         partial = ""
-        async with websockets.connect(self.cfg.soniox_url, max_size=None, open_timeout=self.cfg.stt_timeout_s) as ws:
+        # Bearer header: required by the baze gateway; the official Soniox URL ignores it (api_key below).
+        async with websockets.connect(self.cfg.soniox_url, max_size=None, open_timeout=self.cfg.stt_timeout_s,
+                                      additional_headers={"Authorization": f"Bearer {self._key}"}) as ws:
             await ws.send(json.dumps(self._config_msg()))
             for i in range(0, len(pcm), step):
                 await ws.send(pcm[i:i + step])

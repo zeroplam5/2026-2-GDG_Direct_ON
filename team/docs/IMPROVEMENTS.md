@@ -8,7 +8,7 @@
 
 | 역할 | 지금 시험한 것 | 대회 공식 모델 (11/21 키 제공) |
 |---|---|---|
-| 듣기 (STT) | 로컬 Whisper `faster_whisper` | Soniox `stt-rt-v4` |
+| 듣기 (STT) | 로컬 Whisper `faster_whisper` | Soniox `stt-rt-v6` |
 | 답 만들기 (LLM) | gpt-4.1 | gpt-5.4-mini |
 | 말하기 (TTS) | Windows 기본 음성 `sapi` (기계음) | Gemini 2.5 Flash TTS |
 

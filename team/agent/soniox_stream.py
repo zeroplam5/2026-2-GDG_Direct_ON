@@ -89,8 +89,10 @@ class SonioxStream:
     async def _run(self):
         import websockets
         try:
+            # Bearer header for the baze gateway; official Soniox uses "api_key" in the config message.
             async with websockets.connect(self.cfg.soniox_url, max_size=None,
-                                          open_timeout=self.cfg.stt_timeout_s) as ws:
+                                          open_timeout=self.cfg.stt_timeout_s,
+                                          additional_headers={"Authorization": f"Bearer {self._key}"}) as ws:
                 await ws.send(json.dumps(self.config_msg()))
                 self.connected = True
                 sender = asyncio.create_task(self._send_loop(ws))

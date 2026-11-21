@@ -55,7 +55,7 @@ class Config:
     # soniox provider (11/21 official STT). Model names change: check GET https://api.soniox.com/v1/models
     soniox_url: str = "wss://stt-rt.soniox.com/transcribe-websocket"
     soniox_api_key_env: str = "SONIOX_API_KEY"
-    soniox_model: str = "stt-rt-v4"
+    soniox_model: str = "stt-rt-v6"
     soniox_language_hints: str = "ko"      # comma separated
     soniox_chunk_ms: int = 100             # utterance audio is sent in chunks of this size, as fast as possible
     # end-of-utterance mode. vad (default) = local VAD + speculative STT + completeness check.
