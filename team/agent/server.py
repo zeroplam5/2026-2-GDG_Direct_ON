@@ -17,6 +17,8 @@ from pathlib import Path
 
 import httpx
 import websockets
+from websockets.datastructures import Headers
+from websockets.http11 import Response
 
 from . import policy
 from .config import Config, brand_path
@@ -99,6 +101,16 @@ class App:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def health_check(connection, request):
+    """Plain HTTP (browser, Railway / load-balancer health checks) gets 200 "ok" instead of the
+    library's 426 "missing Connection header". WebSocket upgrades continue to the handler."""
+    if "websocket" in request.headers.get("Upgrade", "").lower():
+        return None
+    body = b"ok\n"
+    return Response(200, "OK", Headers([("Content-Type", "text/plain; charset=utf-8"),
+                                        ("Content-Length", str(len(body)))]), body)
+
+
 async def amain(cfg: Config):
     app = App(cfg)
     await app.warm()
@@ -109,7 +121,8 @@ async def amain(cfg: Config):
         async def handler(ws):
             await Session(ws, app).run()
 
-        async with websockets.serve(handler, cfg.host, cfg.port, max_size=None, ping_interval=None):
+        async with websockets.serve(handler, cfg.host, cfg.port, process_request=health_check,
+                                    max_size=None, ping_interval=None):
             log.info("agent listening on ws://%s:%s", cfg.host, cfg.port)
             await asyncio.Future()
 
@@ -132,6 +145,9 @@ def main():
     ap.add_argument("--env-file", default=".env", help="KEY=VALUE file loaded at start (existing env wins); '' to disable")
     a = vars(ap.parse_args())
     loaded = load_env_file(a.pop("env_file"))
+    # hosting platforms (Railway, Render, Heroku) assign the port in $PORT; --port / AGENT_PORT still win
+    if a.get("port") is None and "AGENT_PORT" not in os.environ and os.environ.get("PORT", "").isdigit():
+        a["port"] = int(os.environ["PORT"])
     cfg = Config.from_env(**a)
     logging.basicConfig(level=os.environ.get("AGENT_LOG_LEVEL", "INFO"),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
