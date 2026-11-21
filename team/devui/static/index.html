@@ -29,6 +29,11 @@
     </div>
     <div class="d-top-right">
       <span id="demoLine" class="d-line">대기</span>
+      <button id="demoChime" class="d-chime" type="button" aria-pressed="true"
+        title="손님 말이 끝났다고 판단하면 짧은 확인음을 냅니다. 이 화면에서만 나고, 대회 서버가 보내는 소리는 아닙니다.">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1z"/></svg>
+        <span id="demoChimeLabel">확인음 켬</span>
+      </button>
       <button id="demoNew" class="d-new" type="button" disabled>새 통화</button>
       <a class="d-dev" href="?">개발 화면</a>
     </div>
@@ -51,12 +56,33 @@
       </div>
     </section>
 
-    <aside class="d-sheet" aria-label="처리 기록">
-      <h2 class="d-h">처리 기록</h2>
-      <div id="demoTools" class="d-steps"></div>
-      <h2 class="d-h">응답 시간</h2>
-      <div id="demoSpeed" class="d-speed"></div>
-      <p class="d-foot">브라우저에서 잰 추정치라 공식 측정값과 조금 다를 수 있어요.</p>
+    <aside class="d-sheet" aria-label="상담 정보">
+      <div class="d-tabs" role="tablist" aria-label="상담 정보">
+        <button class="d-tab" type="button" role="tab" id="demoTabWork" aria-controls="demoPaneWork" aria-selected="true">처리</button>
+        <button class="d-tab" type="button" role="tab" id="demoTabScore" aria-controls="demoPaneScore" aria-selected="false" tabindex="-1">점수</button>
+        <button class="d-tab" type="button" role="tab" id="demoTabLog" aria-controls="demoPaneLog" aria-selected="false" tabindex="-1">기록</button>
+      </div>
+      <div class="d-panes">
+      <div class="d-pane" id="demoPaneWork" role="tabpanel" aria-labelledby="demoTabWork">
+        <h2 class="d-h">처리 기록</h2>
+        <div id="demoTools" class="d-steps"></div>
+        <h2 class="d-h">응답 시간</h2>
+        <div id="demoSpeed" class="d-speed"></div>
+        <p class="d-foot">브라우저에서 잰 추정치라 공식 측정값과 조금 다를 수 있어요.</p>
+      </div>
+      <div class="d-pane" id="demoPaneScore" role="tabpanel" aria-labelledby="demoTabScore" hidden>
+        <div id="demoCriteria"></div>
+      </div>
+      <div class="d-pane" id="demoPaneLog" role="tabpanel" aria-labelledby="demoTabLog" hidden>
+        <div class="d-seg" role="group" aria-label="기록 보기">
+          <button type="button" class="d-seg-b" id="demoLogBrief" aria-pressed="false">요약</button>
+          <button type="button" class="d-seg-b" id="demoLogFull" aria-pressed="true">전체</button>
+        </div>
+        <div id="demoDurations"></div>
+        <ol id="demoTimeline" class="d-tl"></ol>
+        <div class="d-tl-actions"><button id="demoLogCopy" class="d-ghost" type="button" disabled>기록 복사</button></div>
+      </div>
+      </div>
     </aside>
   </div>
 </section>
