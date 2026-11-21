@@ -5,8 +5,9 @@
 
 export const WEIGHTS = { response: 50, func: 20, speed: 30 };
 
-// seconds -> points (same table as eval/score_demo.py)
-export const SPEED_TABLE = [[1.5, 100], [2.0, 90], [2.5, 80], [3.0, 70], [3.5, 60], [4.0, 50], [5.0, 30], [6.0, 10]];
+// seconds -> points, the two official tables (kit SCORING.md, eval/score.py SPEED_TABLE / AFTER_TOOL_TABLE)
+export const SPEED_TABLE = [[1.5, 100], [2.0, 90], [2.5, 80], [3.0, 70], [3.5, 60], [4.0, 50], [5.0, 30], [6.0, 10]];       // first sound
+export const AFTER_TOOL_TABLE = [[3.5, 100], [4.0, 90], [4.5, 80], [5.0, 70], [5.5, 60], [6.0, 50], [7.0, 30], [8.0, 10]];  // answer after the last function result
 
 export const RESPONSE_OPTIONS = [[1, '맞음 1.0'], [0.7, '괜찮음 0.7'], [0, '틀림 0']];
 export const FUNC_OPTIONS = [[1, '맞음 1'], [0, '틀림 0']];
@@ -14,9 +15,9 @@ export const FUNC_OPTIONS = [[1, '맞음 1'], [0, '틀림 0']];
 // the starter-kit evaluator treats an agent frame below this RMS as silence (eval/run_eval.py SILENCE_RMS)
 export const SILENCE_RMS = 300;
 
-export function speedPoints(sec) {
+export function speedPoints(sec, table = SPEED_TABLE) {
   if (sec == null || typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return 0;
-  for (const [bound, pts] of SPEED_TABLE) if (sec <= bound) return pts;
+  for (const [bound, pts] of table) if (sec <= bound) return pts;
   return 0;
 }
 
@@ -33,7 +34,7 @@ export function caseSpeed({ firstSound = null, afterTool = null, toolCalled = fa
   if (firstSound == null) return { first: 0, after: toolCalled ? 0 : null, speed: 0, reason: '소리 없음' };
   const first = speedPoints(firstSound);
   if (!toolCalled) return { first, after: null, speed: first, reason: null };
-  const after = speedPoints(afterTool);   // no answer after the result -> 0
+  const after = speedPoints(afterTool, AFTER_TOOL_TABLE);   // no answer after the result -> 0
   return { first, after, speed: (first + after) / 2, reason: afterTool == null ? '조회 뒤 답 없음' : null };
 }
 

@@ -2,7 +2,7 @@
 // Only states the server actually reports are shown as facts; browser-side estimates are labelled.
 import { StreamResampler, S16Decoder, FRAME_BYTES, FRAME_SAMPLES, TARGET_RATE, rmsInt16LE } from './pcm.js';
 import {
-  SPEED_TABLE, SILENCE_RMS, RESPONSE_OPTIONS, FUNC_OPTIONS, caseSpeed, systemScore, averageScores, parseJudgment,
+  SPEED_TABLE, AFTER_TOOL_TABLE, SILENCE_RMS, RESPONSE_OPTIONS, FUNC_OPTIONS, caseSpeed, systemScore, averageScores, parseJudgment,
 } from './score.js';
 
 const $ = (id) => document.getElementById(id);
@@ -86,6 +86,7 @@ function setStatus(t, key, detail = '') {
   const s = $('status');
   s.textContent = label; s.className = 'pill ' + cls;
   $('statusDetail').textContent = detail;
+  renderDemo();
 }
 function setPlayback(t, key, extra = '') {
   if (t !== T) return;
@@ -498,6 +499,7 @@ function stopMic(t) {
 function teardown(t, reason) {
   if (t.finalized) return;
   t.finalized = true;
+  if (DEMO) demoKeepTurn(t);
   t.endAt = performance.now();
   for (const id of t.timers) { clearTimeout(id); clearInterval(id); }
   stopMic(t);
@@ -522,7 +524,7 @@ function tick(t) {
   $('meterVal').textContent = t.micClosed ? '마이크 꺼짐' : String(Math.round(t.level));
   t.level *= 0.9;
   if (t.playState === 'playing') setPlayback(t, 'playing', `남은 ${t.player.queuedSec().toFixed(1)}초`);
-  renderConn(t); renderAudioInfo(t);
+  renderConn(t); renderAudioInfo(t); renderDemo();
   if (!t.turnEndAt) {
     const anchor = t.eou ? t.eou.at : t.lastVoice;
     if (anchor != null && now - anchor > TAIL_TIMEOUT_MS) {
@@ -542,6 +544,7 @@ function setUserText(t, text, state, kind) {
   const s = $('userTextState');
   s.textContent = state;
   s.className = 'tag' + (kind ? ` ${kind}` : '');
+  renderDemo();
 }
 
 // transcript of past tests: page memory only (never stored or sent anywhere)
@@ -574,6 +577,7 @@ function renderTranscript() {
     ol.appendChild(li);
   }
   ol.scrollTop = ol.scrollHeight;
+  renderDemo();
 }
 function transcriptText() {
   return transcript.map((e) => `[${e.time} ${e.sid}]\n고객: ${e.user ?? '(인식 결과 없음)'}\n상담원: ${e.agent}`).join('\n\n');
@@ -667,13 +671,14 @@ function renderScores() {
   parts.push(ok ? '득점 가능 구간 (6초 이하)' : '이 문항 속도 0점');
   $('scoreNow').textContent = parts.join(' · ');
   $('scoreNow').className = 'score-now ' + (ok ? 'ok' : 'err');
+  renderDemo();
 }
 
 function renderSpeedTable() {
   const tb = document.querySelector('#speedTable tbody');
-  const rowOf = (a, b) => { const tr = document.createElement('tr'); tr.append(el('td', null, a), el('td', 'num', String(b))); return tr; };
-  for (const [bound, pts] of SPEED_TABLE) tb.appendChild(rowOf(`${bound.toFixed(1)}초 이하`, pts));
-  tb.appendChild(rowOf(`${SPEED_TABLE.at(-1)[0].toFixed(1)}초 초과`, 0));
+  const rowOf = (...cells) => { const tr = document.createElement('tr'); cells.forEach((c, i) => tr.appendChild(el('td', i ? 'num' : null, String(c)))); return tr; };
+  SPEED_TABLE.forEach(([bound, pts], i) => tb.appendChild(rowOf(pts, `${bound.toFixed(1)}초 이하`, `${AFTER_TOOL_TABLE[i][0].toFixed(1)}초 이하`)));
+  tb.appendChild(rowOf(0, `${SPEED_TABLE.at(-1)[0].toFixed(1)}초 초과`, `${AFTER_TOOL_TABLE.at(-1)[0].toFixed(1)}초 초과`));
 }
 renderSpeedTable();
 
@@ -826,6 +831,282 @@ function renderTiming(t) {
   sum.appendChild(el('td', 'num', fmt(bv(t.firstPlayAt)) + (t.firstPlayAt != null && aB != null ? ' (체감, 추정)' : '')));
   sum.style.fontWeight = '600';
   tb.appendChild(sum);
+  renderDemo();
+}
+
+// ── demo view (?demo=1): conversation bubbles, function steps, response time. Reads the same test state;
+// the developer cards stay in the page (hidden) and are still updated. textContent only, like the rest. ──
+const DEMO = new URLSearchParams(location.search).get('demo') === '1';
+const DEMO_STATUS = {
+  idle: '말하기를 누르세요', mic: '마이크 준비 중…', connecting: '연결 중…', listening: '말씀하세요',
+  speech: '듣고 있어요…', thinking: '답을 준비하고 있어요…', receiving: '상담원이 말하는 중',
+  server_done: '상담원이 말하는 중', done: '응답 완료 · 이어서 말하려면 말하기를 누르세요',
+  stopped: '중지됨', error: '문제가 생겼어요',
+};
+const TOOL_KO = {
+  get_order_info: ['주문 조회', 'read'], get_return_info: ['반품 현황 조회', 'read'], search_products: ['상품 검색', 'read'],
+  cancel_order: ['주문 취소 접수', 'write'], return_order: ['반품 접수', 'write'], return_order_item: ['일부 반품 접수', 'write'],
+  exchange_order: ['교환 접수', 'write'], request_callback: ['상담원 전화 요청', 'write'],
+};
+const RESULT_KO = { ok: '완료', not_found: '조회 결과 없음', invalid: '정보 부족', already_requested: '이미 접수됨', error: '오류' };
+const ARG_KEYS = ['order_id', 'order_number', 'buyer_cellphone', 'customer_phone_number', 'phone_number', 'customer_name', 'query', 'reason'];
+
+function demoArgs(raw) {
+  let a = raw;
+  if (typeof a === 'string') { try { a = JSON.parse(a); } catch { return a; } }
+  if (!a || typeof a !== 'object') return '';
+  return ARG_KEYS.filter((k) => a[k] != null && a[k] !== '').map((k) => String(a[k])).join(' · ');
+}
+function demoMsg(kind, who, text, pending = false) {
+  const m = el('div', `d-msg ${kind}${pending ? ' pending' : ''}`);
+  m.appendChild(el('span', 'd-who', who));
+  m.appendChild(el('p', 'd-text', text));
+  return m;
+}
+const RESULT_TONE = { ok: 'good', already_requested: 'warn', not_found: 'warn', invalid: 'warn', error: 'bad' };
+function demoStep(name, kindLabel, chip, tone, args, note, result) {
+  const s = el('div', 'd-step');
+  const h = el('div', 'd-step-name', name);
+  h.appendChild(el('span', 'd-step-kind', kindLabel));
+  s.append(h, el('span', `d-chip ${tone || ''}`, chip));
+  if (args) s.appendChild(el('div', 'd-step-args', args));
+  if (note) s.appendChild(el('div', 'd-step-note', note));
+  if (result) {
+    const d = el('details');
+    d.appendChild(el('summary', null, '받은 결과'));
+    d.appendChild(el('pre', null, pretty(result)));
+    s.appendChild(d);
+  }
+  return s;
+}
+// official speed tables (SCORING.md): first sound 1.5 s = 100 ... 6 s = 10; after lookup 3.5 s = 100 ... 8 s = 10
+function demoMetric(label, sec, pts, reason, max, ticks) {
+  const w = el('div', 'd-metric');
+  const top = el('div', 'd-metric-top');
+  top.appendChild(el('span', 'd-metric-k', label));
+  const v = el('span', 'd-metric-v', sec == null ? '—' : `${sec.toFixed(2)}초`);
+  v.appendChild(el('small', null, reason || (pts == null ? '' : `${pts}점`)));
+  top.appendChild(v);
+  const scale = el('div', 'd-scale');
+  const fill = el('div', 'd-scale-fill' + (reason || pts === 0 ? ' bad' : pts >= 80 ? '' : pts >= 50 ? ' warn' : ' bad'));
+  fill.style.width = sec == null ? '0%' : `${Math.max(2, Math.min(100, (Math.max(sec, 0) / max) * 100))}%`;
+  scale.appendChild(fill);
+  for (const [at, txt] of ticks) {
+    const tk = el('span', 'd-tick'); tk.style.left = `${(at / max) * 100}%`;
+    tk.appendChild(el('span', null, txt)); scale.appendChild(tk);
+  }
+  w.append(top, scale);
+  return w;
+}
+// Demo situations: 자유 (empty call) or a short preset conversation in the official history shape,
+// the same shape as an official case (history + the next customer line). Team-made values that match team/data/demo (DEMO1001 배송중, DEMO2002
+// 배송완료, 상담원 전화 요청) - never official contest records. Edit here to fit the data the mock server runs with.
+let DEMO_SCENARIOS = [
+  { name: '자유', history: [] },
+  {
+    name: '이어서 묻기',
+    history: [
+      { role: 'customer', text: '주문번호 데모 이공공이 배송 어디쯤이에요?' },
+      { role: 'tool_call', name: 'get_order_info', arguments: { order_id: 'DEMO2002' } },
+      { role: 'tool_result', name: 'get_order_info', result: { status: 'ok', data: { order_id: 'DEMO2002', shipping_status: '배송완료' } } },
+      { role: 'agent', text: 'DEMO2002 주문은 배송 완료로 나옵니다.' },
+    ],
+  },
+  {
+    name: '확인 뒤 접수',
+    history: [
+      { role: 'customer', text: '상담원 통화 원해요. 홍길동, 공일공 공공공공 일이삼사요.' },
+      { role: 'agent', text: '홍길동 님, 010-0000-1234로 상담원 전화 요청 접수할까요?' },
+    ],
+  },
+  {
+    name: '번호 정정',
+    history: [
+      { role: 'customer', text: '주문번호 데모 일공공일 배송 확인해 주세요.' },
+      { role: 'agent', text: 'DEMO1001 주문 맞으세요?' },
+    ],
+  },
+  {
+    name: '취소 요청',
+    history: [
+      { role: 'customer', text: '주문번호 20990101-0000001 취소하고 싶어요.' },   // 15 digits: the official rules check the order-number format
+      { role: 'agent', text: '취소 사유를 알려 주시겠어요?' },
+    ],
+  },
+  {
+    name: '몸이 불편해요',
+    history: [
+      { role: 'customer', text: '어제부터 관절 영양제 먹고 있는데요.' },
+      { role: 'agent', text: '네, 말씀하세요.' },
+    ],
+  },
+];
+let demoScenario = 0;
+// When the kit data is on this computer, team/scripts/make_demo_scenarios.py writes tabs from the official
+// practice cases (data/demo_scenarios.json, never committed) and the devui server serves them: use those,
+// keeping 자유 first. Without the file the made-up tabs above stay.
+async function loadOfficialScenarios() {
+  try {
+    const r = await fetch('scenarios.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    const list = await r.json();
+    if (!Array.isArray(list) || !list.length) return;
+    DEMO_SCENARIOS = [DEMO_SCENARIOS[0], ...list.map((x) => ({ name: x.name, history: x.history || [], caller: x.caller ?? null, say: x.say || '' }))];
+    demoScenario = 0;
+    demoNewCall();
+  } catch { /* keep the built-in tabs */ }
+}
+function demoUseScenario(i) {
+  if (T && !T.finalized) return;
+  demoScenario = i;
+  demoNewCall();
+}
+function renderScenarioTabs() {
+  const box = $('demoScenarios');
+  box.textContent = '';
+  const busy = !!T && !T.finalized;
+  DEMO_SCENARIOS.forEach((s, i) => {
+    const b = el('button', 'd-scn-tab', s.name);
+    b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(i === demoScenario));
+    b.disabled = busy && i !== demoScenario;
+    b.onclick = () => demoUseScenario(i);
+    box.appendChild(b);
+  });
+}
+const demoShort = (s, n = 90) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+function demoPastEntries(chat, history) {
+  for (const h of history) {
+    if (h.role === 'customer') chat.appendChild(demoMsg('user past', '고객 · 이전 대화', demoShort(h.text)));
+    else if (h.role === 'agent') chat.appendChild(demoMsg('agent past', '상담원 · 이전 대화', demoShort(h.text)));
+    else if (h.role === 'tool_result') {
+      const [ko] = TOOL_KO[h.name] || [h.name];
+      const call = history.find((x) => x.role === 'tool_call' && x.name === h.name);
+      const st = h.result && h.result.status;
+      chat.appendChild(el('p', 'd-past-tool', `이전 ${ko} · ${demoArgs(call && call.arguments)} · ${RESULT_KO[st] || st || ''}`));
+    }
+  }
+  const say = DEMO_SCENARIOS[demoScenario].say;
+  if (history.length || say) {
+    chat.appendChild(el('p', 'd-divider', say ? `여기부터 지금 통화 · 예: “${demoShort(say, 40)}”` : '여기부터 지금 통화'));
+  }
+}
+
+// The official evaluator sends one customer utterance per connection, with the conversation before it in
+// session.start "history" (kit SPEC.md). The demo does the same: every finished turn is appended to the
+// history field in the official shape (customer / tool_call / tool_result / agent), so the next 말하기
+// continues the same call ("그 주문 취소해 주세요", or "네" after the agent read a booking back).
+function demoKeepTurn(t) {
+  if (t.historyKept || !t.turnEndAt || !t.debug) return;
+  t.historyKept = true;
+  let h;
+  try { h = JSON.parse($('history').value.trim() || '[]'); if (!Array.isArray(h)) h = []; } catch { h = []; }
+  const said = t.userText ?? t.interimText;
+  if (said) h.push({ role: 'customer', text: said });
+  for (const c of t.tools) {
+    if (!c.end || !c.end.sent) continue;          // only calls that reached the function server
+    let args = c.args;
+    if (typeof args === 'string') { try { args = JSON.parse(args); } catch { /* keep the raw string */ } }
+    h.push({ role: 'tool_call', name: c.name, arguments: args ?? {} });
+    h.push({ role: 'tool_result', name: c.name, result: c.end.result ?? null });
+  }
+  const answer = t.agentTexts.join(' ').trim();
+  if (answer) h.push({ role: 'agent', text: answer });
+  $('history').value = JSON.stringify(h, null, 2);
+  $('useHistory').checked = true;
+}
+function demoNewCall() {
+  if (T && !T.finalized) return;
+  $('history').value = JSON.stringify(DEMO_SCENARIOS[demoScenario].history, null, 2);
+  $('caller').value = JSON.stringify(DEMO_SCENARIOS[demoScenario].caller ?? null);
+  transcript.length = 0; scores.length = 0;
+  renderTranscript(); renderScores();
+  T = null; $('demoTimer').textContent = '00:00';
+  renderDemo();
+}
+function renderDemo() {
+  if (!DEMO) return;
+  const t = T;
+  const active = !!t && !t.finalized;
+  $('demoBtnLabel').textContent = active ? '중지' : (transcript.length ? '이어서 말하기' : '말하기');
+  $('demoNew').disabled = active || !transcript.length;
+  renderScenarioTabs();
+  $('demoBtn').classList.toggle('live', active);
+  // same log scale as the developer page's level meter; empty while the microphone is not sending
+  const hearing = active && !t.micClosed && t.sending;
+  const lv = hearing ? Math.min(100, 100 * Math.log10(1 + t.level) / Math.log10(1 + 32768)) : 0;
+  $('demoLevel').style.width = `${lv}%`;
+  $('demoLevel').parentElement.classList.toggle('off', !hearing);
+
+  const key = t ? t.status : 'idle';
+  const st = $('demoStatus');
+  st.textContent = !t ? '말하기를 누르고 고객처럼 말해 보세요'
+    : key === 'error' && t.error ? t.error
+    : (key === 'server_done' && t.playState !== 'playing' ? DEMO_STATUS.done : DEMO_STATUS[key] || '');
+  const tone = { 's-live': 'live', 's-busy': 'busy', 's-ok': 'ok', 's-err': 'err' }[(STATUS[key] || [])[1]] || '';
+  st.className = 'd-status ' + tone;
+  const line = $('demoLine');
+  const talking = key === 'receiving' || (key === 'server_done' && t && t.playState === 'playing');
+  line.textContent = key === 'error' ? '연결 문제' : talking ? '상담원 응답 중' : active ? '통화 중' : '대기';
+  line.className = 'd-line' + (key === 'error' ? ' err' : talking ? ' talk' : active ? ' on' : '');
+  if (t && t.firstFrameSentAt != null) {
+    const sec = Math.floor(((active ? performance.now() : (t.endAt || performance.now())) - t.firstFrameSentAt) / 1000);
+    $('demoTimer').textContent = `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+  }
+
+  // conversation: finished turns + the turn in progress
+  const chat = $('demoChat');
+  chat.textContent = '';
+  demoPastEntries(chat, DEMO_SCENARIOS[demoScenario].history);
+  for (const e of transcript) {
+    chat.appendChild(demoMsg('user', '고객', e.user == null ? '(인식 결과 없음)' : (e.user || '(인식된 말 없음)')));
+    chat.appendChild(demoMsg('agent', '상담원', e.agent || '(응답 없음)'));
+  }
+  if (t && !transcript.some((e) => e.sid === t.sid)) {
+    const said = t.userText ?? t.interimText;
+    if (said != null || ['speech', 'thinking'].includes(t.status)) chat.appendChild(demoMsg('user', '고객', said || '…', t.userText == null));
+    if (t.agentTexts.length) chat.appendChild(demoMsg('agent', '상담원', t.agentTexts.join(' ')));
+    else if (t.status === 'thinking') chat.appendChild(demoMsg('agent', '상담원', '…', true));
+  }
+  if (!chat.childElementCount) {
+    const p = el('p', 'd-empty');
+    p.append(el('b', null, '말하기'), '를 누르고 고객처럼 자유롭게 문의해 보세요.');
+    chat.appendChild(p);
+  }
+  chat.scrollTop = chat.scrollHeight;
+
+  // work record of this turn
+  const box = $('demoTools');
+  box.textContent = '';
+  if (t && t.toolAck) box.appendChild(el('p', 'd-none', `조회하는 동안 "${t.toolAck.text}"라고 먼저 안내했어요.`));
+  for (const g of (t ? t.gate : [])) {
+    for (const d of g.decisions || []) {
+      if (d.allowed) continue;
+      const [ko, kind] = TOOL_KO[d.name] || [d.name, 'write'];
+      box.appendChild(demoStep(ko, kind === 'read' ? '조회' : '접수', '보류', 'bad', demoArgs(d.args),
+        `${GATE_REASONS[d.reason] || d.reason}. 실행하지 않고 고객에게 먼저 확인합니다.`));
+    }
+  }
+  for (const c of (t ? t.tools : [])) {
+    const [ko, kind] = TOOL_KO[c.name] || [c.name, 'read'];
+    const r = c.end && c.end.result;
+    const chip = !c.end ? '진행 중' : !c.end.sent ? '보내지 않음' : (r && r.status ? (RESULT_KO[r.status] || r.status) : '완료');
+    const tone = !c.end ? '' : !c.end.sent ? 'bad' : (r && r.status ? (RESULT_TONE[r.status] || '') : 'good');
+    const note = c.end && c.end.ms != null ? `${(c.end.ms / 1000).toFixed(1)}초 걸림` : '';
+    box.appendChild(demoStep(ko, kind === 'read' ? '조회' : '접수', chip, tone, demoArgs(c.args), note, r));
+  }
+  if (!box.childElementCount) {
+    box.appendChild(el('p', 'd-none', t && t.turnEndAt ? '이번 답에는 조회나 접수가 없었어요.' : '주문 조회나 반품 접수를 하면 여기에 남아요.'));
+  }
+
+  // response time on the official score scales
+  const sp = $('demoSpeed');
+  sp.textContent = '';
+  const rec = t && scores.find((x) => x.sid === t.sid);
+  sp.appendChild(demoMetric('첫 응답', rec ? rec.firstSound : null, rec ? rec.first : null, rec && rec.reason,
+    6.5, [[1.5, '1.5초'], [3, '3초'], [6, '6초']]));
+  if (rec && rec.toolCalled) {
+    sp.appendChild(demoMetric('조회 뒤 답', rec.afterTool, rec.after, null, 8.5, [[3.5, '3.5초'], [5, '5초'], [8, '8초']]));
+  }
 }
 
 function renderAudioInfo(t) {
@@ -1139,6 +1420,10 @@ refreshDevices().then(() => {
 });
 
 $('btnStart').onclick = () => { startTest().catch((e) => T && fail(T, `예상하지 못한 오류: ${e.message || e}`)); };
+$('demoBtn').onclick = () => { if (T && !T.finalized) stopTest(); else $('btnStart').onclick(); };
+$('demoNew').onclick = demoNewCall;
+if (DEMO) { $('history').value = JSON.stringify(DEMO_SCENARIOS[0].history); $('useHistory').checked = true; loadOfficialScenarios(); }
+if (DEMO) { document.body.classList.add('demo'); document.title = 'AI 전화 상담원 · 시연'; renderDemo(); }
 $('btnStop').onclick = stopTest;
 $('btnReplay').onclick = replay;
 $('btnAddHistory').onclick = addHistory;
