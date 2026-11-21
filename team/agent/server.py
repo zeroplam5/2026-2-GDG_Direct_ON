@@ -41,6 +41,10 @@ class App:
             log.warning("no brand material at %s (set AGENT_BRAND_DIR to the kit's data/brand)", brand_dir)
         self.prompt_template = policy.compose_prompt(policy.load_prompt(cfg.prompt_path), self.brand)
         self.phrases = policy.load_phrases(cfg.phrases_path)
+        c = self.phrases.get("cushion") or cfg.cushion_text
+        self.cushion_texts = [x.strip() for x in (c if isinstance(c, list) else str(c).split("|")) if str(x).strip()]
+        self.cushions: list[tuple[str, bytes]] = []   # (text, pcm) pre-synthesized at startup
+        self._cushion_i = 0
         self.rules = policy.load_rules(cfg.rules_path)  # the one rules file (gate, hand-off, prompt section)
         t = time.perf_counter()
         self.stt = make_stt(cfg)
@@ -60,12 +64,32 @@ class App:
                 self.cached[k] = await self.tts.synth(self.phrases[k])
             except Exception as e:
                 log.warning("pre-synthesis of %r failed (%s); will synthesize on demand", k, type(e).__name__)
+        from .topic_ack import TOPICS
+        self.topic_acks: dict[str, tuple[str, bytes]] = {}   # key -> (line, pcm)
+        for key, (_, text) in (TOPICS.items() if self.cfg.topic_ack else []):
+            try:
+                self.topic_acks[key] = (text, await self.tts.synth(normalize_for_tts(text)))
+            except Exception as e:
+                log.warning("pre-synthesis of topic_ack %r failed (%s); that topic is skipped", key, type(e).__name__)
+        for text in (self.cushion_texts if self.cfg.cushion else []):
+            try:
+                self.cushions.append((text, await self.tts.synth(normalize_for_tts(text))))
+            except Exception as e:
+                log.warning("pre-synthesis of cushion %r failed (%s); that phrase is skipped", text, type(e).__name__)
         from .dialog import ack_phrases
         for text in (ack_phrases(self.phrases) if self.cfg.tool_ack else []):
             try:
                 self.cached_text[text] = await self.tts.synth(normalize_for_tts(text))
             except Exception as e:
                 log.warning("pre-synthesis of tool_ack %r failed (%s); will synthesize on demand", text, type(e).__name__)
+
+    def next_cushion(self) -> tuple[str, bytes] | None:
+        """The next cushion phrase, in turn across all calls (no two slow turns in a row hear the same one)."""
+        if not self.cushions:
+            return None
+        item = self.cushions[self._cushion_i % len(self.cushions)]
+        self._cushion_i += 1
+        return item
 
     def write_metrics(self, row: dict):
         with self._mlock, open(self.cfg.metrics_path, "a", encoding="utf-8") as f:

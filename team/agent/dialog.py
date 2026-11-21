@@ -216,11 +216,17 @@ class Dialog:
             said.append(out)
         return out
 
-    async def run_turn(self, user_text: str, m: dict):
+    async def run_turn(self, user_text: str, m: dict, said_first: str | None = None):
+        """said_first: a line the session already said this turn (topic_ack). The model is told, so
+        it continues instead of repeating it, and it stays in the history as part of the reply."""
         flags = policy.handoff_flags(user_text, self.rules)
         m["handoff_flags"] = flags
         turn_start = len(self.messages)
-        self.messages.append({"role": "user", "content": policy.user_message(user_text, flags, self.rules)})
+        content = policy.user_message(user_text, flags, self.rules)
+        if said_first:
+            content += (f"\n\n[시스템 메모: 고객에게 방금 \"{said_first}\"라고 먼저 말했습니다. "
+                        "같은 말을 되풀이하지 말고 바로 이어서 안내하세요.]")
+        self.messages.append({"role": "user", "content": content})
         if self.prefetch:
             self.prefetch.turn_start(user_text)  # numbers in the customer's words: lookups start now
             given = self._give_prefetched(turn_start)
@@ -233,8 +239,8 @@ class Dialog:
             m.setdefault("gate", [])
         m.setdefault("llm_rounds", 0)
         m.setdefault("tool_calls", [])
-        spoke = False
-        said: list[str] = []  # sentences actually said this turn (after the output check)
+        spoke = bool(said_first)  # a line already said: no tool_ack on top of it
+        said: list[str] = [said_first] if said_first else []  # sentences actually said this turn
         ahead = None  # queue of a reply prepared while a registration was running (write_answer_ahead)
         for rnd in range(self.cfg.max_tool_rounds + 1):
             last_round = rnd == self.cfg.max_tool_rounds

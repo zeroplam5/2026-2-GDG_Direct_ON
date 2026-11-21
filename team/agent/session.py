@@ -62,6 +62,7 @@ class Session:
         self.turn_idx = 0
         self.m: dict = {}
         self.closed = False
+        self._send_lock = asyncio.Lock()  # one audio clip at a time (cushion vs reply)
         self.ignored_frames_while_responding = 0
         # Optional debug sink (callable taking a dict). None on the competition server path
         # (team.agent.server); only team.devui sets it. When None nothing extra is sent.
@@ -121,6 +122,9 @@ class Session:
                              gate=Gate.from_config(self.cfg, start) if self.cfg.tool_gate else None,
                              context=policy.build_context(start))
         self.tools_ready = tools_task
+        from .topic_ack import last_agent_line
+        self.last_agent = last_agent_line(start.get("history"))
+        self.has_caller = bool(start.get("caller"))
         if self.cfg.prefetch:  # order / return lookups called ahead (prefetch.py), never registrations
             pf = Prefetch(self.tools, getattr(self.app, "rules", None), start.get("history"), start.get("caller"),
                           max_calls=self.cfg.prefetch_max_calls)
@@ -374,6 +378,8 @@ class Session:
         if prev is not None and not prev.done():  # let a cancelled reply roll back its history first
             await asyncio.wait([prev])
         hist_len = len(self.dialog.messages)
+        cushion = asyncio.create_task(self._cushion(m)) if self.cfg.cushion and getattr(self.app, "cushions", None) else None
+        topic_task = None
         try:
             try:
                 async with asyncio.timeout(self.cfg.turn_budget_s):
@@ -394,7 +400,12 @@ class Session:
                     if self.tools.list_error:
                         m["tools_list_error"] = self.tools.list_error
                     self.app.llm_last_used = time.monotonic()  # the warm-up is skipped while calls keep coming
-                    await self._pipeline(self.dialog.run_turn(user_text, m), m, spoken, reply)
+                    first = self._topic_ack(user_text, m)
+                    if first:
+                        reply.append(first[0])  # part of what the customer heard this turn
+                        topic_task = asyncio.create_task(self._say_line("topic_ack", first[0], first[1], m))
+                    await self._pipeline(self.dialog.run_turn(user_text, m, said_first=first[0] if first else None),
+                                         m, spoken, reply)
                     m["outcome"] = "ok"
             except TimeoutError:
                 m["outcome"] = "budget_timeout"
@@ -415,6 +426,15 @@ class Session:
                 if not spoken["n"]:
                     await self._speak_cached("error_fallback", m, spoken)
         finally:
+            if topic_task is not None:  # a line being said is finished before turn.end
+                with contextlib.suppress(BaseException):
+                    await asyncio.shield(topic_task)
+            if cushion is not None:
+                if m.get("cushion"):        # already being said: let it finish before turn.end
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(cushion)
+                else:
+                    cushion.cancel()
             if not m.get("_resumed"):  # a resumed turn sends no turn.end and writes no metrics row
                 self._stop_listening()
                 await self._send_json({"type": "turn.end"})
@@ -424,6 +444,52 @@ class Session:
                 if self.stream:
                     self.stream.clear()  # tokens heard while the agent spoke are not the next utterance
                 self._write_metrics(m, user_text, " ".join(reply))
+
+    async def _cushion(self, m: dict):
+        """Say the cushion phrase once when the customer has heard nothing for cushion_after_s - from
+        the end of their speech, or from the end of the last line said before the answer (topic_ack,
+        tool_ack) - and the answer has not started. Not counted as an answer (fallbacks still play);
+        when it is the first sound it ends resume_before_audio's listening, like any audio."""
+        speech_end = m.get("t_last_speech") or m.get("t_commit") or time.perf_counter()
+        while True:
+            base = max(speech_end, m.get("_audio_until") or 0.0)  # end of the last sound sent
+            wait = base + self.cfg.cushion_after_s - time.perf_counter()
+            if wait <= 0:
+                break
+            await asyncio.sleep(wait)
+        if m.get("_answer_started") or self.closed:  # the answer (or a fallback) is already out
+            return
+        item = self.app.next_cushion()
+        if item is None:
+            return
+        text, pcm = item
+        m["cushion"] = text
+        self._dbg("cushion", text=text, after_s=round(time.perf_counter() - base, 2))
+        await self._say_line(None, text, pcm, m)
+
+    def _topic_ack(self, user_text: str, m: dict) -> tuple[str, bytes] | None:
+        """(line, pcm) to say right now about the customer's topic, or None (topic_ack.py conditions)."""
+        acks = getattr(self.app, "topic_acks", None)
+        if not (self.cfg.topic_ack and acks) or m.get("_out_started"):
+            return None
+        from .topic_ack import pick
+        from . import policy as _policy
+        got = pick(user_text, getattr(self, "last_agent", None), getattr(self, "has_caller", False),
+                   _policy.handoff_flags(user_text, getattr(self.app, "rules", None)))
+        if not got or got[0] not in acks:
+            return None
+        m["topic_ack"] = got[0]
+        return acks[got[0]]
+
+    async def _say_line(self, kind: str | None, text: str, pcm: bytes, m: dict):
+        """A pre-synthesized line that is not the answer (topic_ack, cushion): it never counts as a
+        reply, so fallbacks still play; the answer's audio waits for it on the send lock."""
+        m["_out_started"] = True  # set before any await: the reply now waits for the send lock
+        if kind:
+            self._dbg(kind, text=text)
+        if self.cfg.send_transcript_event:
+            await self._send_json({"type": "agent.transcript", "text": text})
+        await self._send_pcm(pcm, m)
 
     async def _pipeline(self, sentences, m, spoken, reply):
         """Producer (LLM sentences) and consumer (TTS + send) overlap, so the next sentence
@@ -444,6 +510,8 @@ class Session:
                 if s is None:
                     break
                 reply.append(s)
+                if not isinstance(s, Ack):
+                    m["_answer_started"] = True  # a "checking..." phrase is not the answer
                 before = spoken["n"]
                 await self._speak_text(s, m, spoken)
                 if isinstance(s, Ack):  # a "checking..." phrase is not an answer: fallbacks must still play
@@ -483,6 +551,7 @@ class Session:
         await self._send_audio(text, pcm, m, spoken)
 
     async def _speak_cached(self, key: str, m: dict, spoken: dict):
+        m["_answer_started"] = True  # not_heard / fallbacks are the reply of this turn
         pcm = self.app.cached.get(key)
         if pcm is None:
             pcm = await self.app.tts.synth(self.app.phrases[key])
@@ -505,18 +574,21 @@ class Session:
         if self.in_rate != RATE:
             pcm = resample(pcm, RATE, self.in_rate)
         size = self.in_rate * 2 * self.cfg.output_chunk_ms // 1000
-        t0 = time.perf_counter()
-        for i, c in enumerate(chunk(pcm, size)):
-            if self.closed:
-                return
-            await self.ws.send(c)
-            if i == 0 and "t_first_audio" not in m:
-                m["t_first_audio"] = time.perf_counter()
-                self._dbg("audio.first_sent")
-            if self.cfg.output_pacing == "realtime":
-                wait = t0 + (i + 1) * self.cfg.output_chunk_ms / 1000 - time.perf_counter()
-                if wait > 0:
-                    await asyncio.sleep(wait)
+        async with self._send_lock:  # a clip is never interleaved with another one
+            t0 = time.perf_counter()
+            # the customer hears it in real time: when does what has been sent so far end?
+            m["_audio_until"] = max(m.get("_audio_until") or 0.0, t0) + len(pcm) / (self.in_rate * 2)
+            for i, c in enumerate(chunk(pcm, size)):
+                if self.closed:
+                    return
+                await self.ws.send(c)
+                if i == 0 and "t_first_audio" not in m:
+                    m["t_first_audio"] = time.perf_counter()
+                    self._dbg("audio.first_sent")
+                if self.cfg.output_pacing == "realtime":
+                    wait = t0 + (i + 1) * self.cfg.output_chunk_ms / 1000 - time.perf_counter()
+                    if wait > 0:
+                        await asyncio.sleep(wait)
 
     async def _send_json(self, obj: dict):
         if self.closed:
@@ -561,7 +633,7 @@ class Session:
             "llm_rounds": m.get("llm_rounds"), "tool_calls": m.get("tool_calls"),
             "tools_available": m.get("tools_available"), "tools_list_error": m.get("tools_list_error"),
             "tts_ms": m.get("tts_ms"), "handoff_flags": m.get("handoff_flags"),
-            "outcome": m.get("outcome"), "ignored_frames_while_responding": self.ignored_frames_while_responding,
+            "outcome": m.get("outcome"), "cushion": bool(m.get("cushion")), "topic_ack": m.get("topic_ack"), "ignored_frames_while_responding": self.ignored_frames_while_responding,
             "providers": {"stt": self.app.stt.name, "llm": self.app.llm.name, "tts": self.app.tts.name},
             # what the code checks decided (gate: name / allowed / reason only, no arguments);
             # output-check values (the numbers / time words) only with log_text

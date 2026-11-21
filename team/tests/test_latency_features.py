@@ -44,6 +44,7 @@ def test_ack_is_off_by_default():
 def test_order_lookup_plays_cached_ack_first(agent, two_mocks):
     start, cfg = agent
     cfg.tool_ack = True
+    cfg.topic_ack = False   # the sample is a delivery question: the topic line would replace tool_ack
     (store, murl), _ = two_mocks
 
     async def go():
@@ -100,6 +101,7 @@ def test_ack_does_not_suppress_timeout_fallback(agent, mock_server):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     start, cfg = agent
     cfg.turn_budget_s, cfg.tool_timeout_s, cfg.tool_ack = 1.5, 10.0, True
+    cfg.topic_ack = False   # this test is about tool_ack (test_topic_ack.py covers the topic line)
 
     async def go():
         h = await start()
